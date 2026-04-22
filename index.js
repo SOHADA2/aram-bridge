@@ -12,11 +12,12 @@ const lcuClient = axios.create({
 });
 
 // ── 상태 변수 ────────────────────────────────────────────────────
-const connector   = new LCUConnector();
-let baseUrl       = null;
-let lastPhase     = null;
-let pollTimer     = null;
-let eogSaved      = false; // 한 게임당 한 번만 저장
+const connector    = new LCUConnector();
+let baseUrl        = null;
+let lastPhase      = null;
+let pollTimer      = null;
+let heartbeatTimer = null;
+let eogSaved       = false;
 
 // ── 유틸 ─────────────────────────────────────────────────────────
 function log(msg) {
@@ -32,15 +33,31 @@ async function fbSet(path, data) {
       JSON.stringify(data === null ? null : data),
       { headers: { 'Content-Type': 'application/json' }, timeout: 5000 }
     );
-  } catch (e) {
-    // Firebase 오류는 조용히 무시 (네트워크 끊김 등)
-  }
+  } catch (e) {}
+}
+
+async function fbGet(path) {
+  const res = await axios.get(`${FIREBASE_URL}/${path}.json`, { timeout: 3000 });
+  return res.data;
 }
 
 // ── LCU 요청 ─────────────────────────────────────────────────────
 async function lcu(path) {
   const res = await lcuClient.get(`${baseUrl}${path}`);
   return res.data;
+}
+
+// ── 하트비트 ──────────────────────────────────────────────────────
+// 5초마다 타임스탬프 갱신 → 사이트에서 10초 이상 미갱신 시 "없음" 표시
+// 강제 종료되어도 10초 안에 자동으로 "브릿지 없음"으로 전환됨
+function startHeartbeat() {
+  fbSet('session/bridgeHeartbeat', Date.now());
+  heartbeatTimer = setInterval(() => fbSet('session/bridgeHeartbeat', Date.now()), 5000);
+}
+
+function stopHeartbeat() {
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+  fbSet('session/bridgeHeartbeat', null).catch(() => {});
 }
 
 // ── 챔피언 선택 데이터 수집 ───────────────────────────────────────
@@ -65,9 +82,7 @@ async function handleChampSelect() {
       updatedAt:      Date.now()
     });
 
-  } catch (_) {
-    // 챔피언 선택 세션 없음
-  }
+  } catch (_) {}
 }
 
 // ── 게임 종료 데이터 수집 ─────────────────────────────────────────
@@ -75,11 +90,20 @@ async function handleEndOfGame() {
   if (eogSaved) return;
 
   try {
+    // 다른 브릿지가 이미 저장했는지 확인 (30초 이내 저장 기록 있으면 건너뜀)
+    try {
+      const existing = await fbGet('session/eogStats');
+      if (existing?.savedAt && Date.now() - existing.savedAt < 30000) {
+        eogSaved = true;
+        log('게임 종료 데이터 이미 저장됨 — 건너뜀');
+        return;
+      }
+    } catch (_) {}
+
     const eog = await lcu('/lol/end-of-game/v1/eog-stats-block');
     if (!eog?.teams) return;
 
     const winTeam  = eog.teams.find(t => t.isWinningTeam);
-    // teamId 100 = 블루(1팀), 200 = 레드(2팀)
     const winSide  = winTeam?.teamId === 100 ? 'blue' : 'red';
 
     const players = [];
@@ -109,16 +133,13 @@ async function handleEndOfGame() {
       savedAt:   Date.now()
     });
 
-    // 투표 자동 시작 트리거
     await fbSet('session/voteStarted', Date.now());
 
     eogSaved = true;
     log(`게임 종료 저장 완료 ✅  승리: ${winSide === 'blue' ? '🔵 1팀' : '🔴 2팀'}`);
     log('투표 시작 신호 전송 완료 ✅');
 
-  } catch (_) {
-    // 아직 결과 화면이 뜨지 않음
-  }
+  } catch (_) {}
 }
 
 // ── 게임 페이즈 폴링 (3초 간격) ───────────────────────────────────
@@ -159,26 +180,21 @@ async function poll() {
           await fbSet('session/gamePhase', phase);
           await fbSet('session/champSelect', null);
           if (['None', 'Lobby'].includes(phase)) {
-            // 새 게임 준비 — EOG 플래그 리셋
             eogSaved = false;
           }
           break;
       }
     }
 
-    // 챔피언 선택 중 주기적 업데이트
     if (phase === 'ChampSelect') {
       await handleChampSelect();
     }
 
-    // EndOfGame 단계에서 아직 저장 못 했으면 재시도
     if ((phase === 'EndOfGame' || phase === 'PreEndOfGame') && !eogSaved) {
       await handleEndOfGame();
     }
 
-  } catch (_) {
-    // LCU 응답 없음 (클라이언트 로딩 중 등)
-  }
+  } catch (_) {}
 }
 
 // ── LCU 연결 이벤트 ──────────────────────────────────────────────
@@ -191,9 +207,17 @@ connector.on('connect', async data => {
     log(`접속 계정: ${me.displayName}`);
   } catch (_) {}
 
-  await fbSet('session/bridgeConnected', true);
+  // 다른 브릿지가 이미 실행 중인지 경고
+  try {
+    const hb = await fbGet('session/bridgeHeartbeat');
+    if (hb && Date.now() - hb < 10000) {
+      log('⚠️  다른 브릿지가 이미 실행 중입니다. 기존 브릿지를 먼저 종료하세요.');
+    }
+  } catch (_) {}
 
-  // 폴링 시작
+  await fbSet('session/bridgeConnected', true);
+  startHeartbeat();
+
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(poll, 3000);
   poll();
@@ -201,17 +225,18 @@ connector.on('connect', async data => {
 
 connector.on('disconnect', async () => {
   log('롤 클라이언트 종료됨. 재연결 대기 중...');
-  baseUrl    = null;
-  lastPhase  = null;
-  eogSaved   = false;
+  baseUrl   = null;
+  lastPhase = null;
+  eogSaved  = false;
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  stopHeartbeat();
   await fbSet('session/bridgeConnected', false).catch(() => {});
 });
 
 // ── 시작 ─────────────────────────────────────────────────────────
 console.log('');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('  ARAM 브릿지 v1.0.0');
+console.log('  ARAM 브릿지 v1.0.1');
 console.log('  롤 클라이언트를 기다리는 중...');
 console.log('  이 창을 닫지 마세요.');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');

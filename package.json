@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "axios": "^1.6.0",
-    "lcu-connector": "^1.1.0"
+    "lcu-connector": "^2.1.4"
   },
   "devDependencies": {
     "pkg": "^5.8.1"

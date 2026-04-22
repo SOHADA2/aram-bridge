@@ -61,7 +61,9 @@ async function lcu(path) {
 }
 
 // ── 하트비트 ──────────────────────────────────────────────────────
+// 브릿지 프로세스 자체의 생존 신호. LCU 연결 여부와 무관하게 실행되어야 한다.
 function startHeartbeat() {
+  if (heartbeatTimer) return;
   fbSet(`${BRIDGE_ROOT}/heartbeat`, Date.now());
   heartbeatTimer = setInterval(() => fbSet(`${BRIDGE_ROOT}/heartbeat`, Date.now()), 5000);
 }
@@ -263,7 +265,6 @@ connector.on('connect', async data => {
   } catch (_) {}
 
   await fbSet(`${BRIDGE_ROOT}/connected`, true);
-  startHeartbeat();
 
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(poll, 3000);
@@ -276,17 +277,20 @@ connector.on('disconnect', async () => {
   lastPhase = null;
   eogSaved  = false;
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-  stopHeartbeat();
+  // heartbeat는 브릿지 프로세스 생존 신호이므로 LCU 연결과 무관하게 유지
   await fbSet(`${BRIDGE_ROOT}/connected`, false).catch(() => {});
 });
 
 // ── 시작 ─────────────────────────────────────────────────────────
 console.log('');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('  ARAM 브릿지 v1.1.0');
+console.log('  ARAM 브릿지 v1.1.1');
 console.log('  롤 클라이언트를 기다리는 중...');
 console.log('  이 창을 닫지 마세요.');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 console.log('');
 
-checkFirebase().then(() => connector.start());
+checkFirebase().then((ok) => {
+  if (ok) startHeartbeat();
+  connector.start();
+});

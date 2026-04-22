@@ -202,12 +202,16 @@ async function handleEndOfGame() {
     const winTeam  = eog.teams.find(t => t.isWinningTeam);
     const winSide  = winTeam?.teamId === 100 ? 'blue' : 'red';
 
+    // 챔피언 선택 시점에 저장한 champId→name 맵을 이름 보완용으로 활용
+    let champPickNames = {};
+    try { champPickNames = (await fbGet(`${BRIDGE_ROOT}/lastChampPicks`)) || {}; } catch (_) {}
+
     const players = [];
     for (const team of eog.teams) {
       for (const p of (team.players || [])) {
         const s = p.stats || {};
         players.push({
-          summonerName: p.riotIdGameName || p.summonerName || '',
+          summonerName: p.riotIdGameName || p.summonerName || champPickNames[p.championId] || '',
           championId:   p.championId,
           championName: p.championName || p.skinName || '',
           kills:        s.CHAMPIONS_KILLED         || 0,
@@ -256,6 +260,16 @@ async function poll() {
         case 'GameStart':
         case 'InProgress':
           await fbSet(`${BRIDGE_ROOT}/gamePhase`,'InProgress');
+          try {
+            const picks = await fbGet(`${BRIDGE_ROOT}/champSelect`);
+            if (picks) {
+              const pickMap = {};
+              for (const p of [...(picks.myTeam||[]), ...(picks.theirTeam||[])]) {
+                if (p.champId && p.name) pickMap[p.champId] = p.name;
+              }
+              await fbSet(`${BRIDGE_ROOT}/lastChampPicks`, pickMap);
+            }
+          } catch (_) {}
           await fbSet(`${BRIDGE_ROOT}/champSelect`, null);
           break;
 
@@ -331,7 +345,7 @@ connector.on('disconnect', async () => {
 // ── 시작 ─────────────────────────────────────────────────────────
 console.log('');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('  ARAM 브릿지 v1.1.4');
+console.log('  ARAM 브릿지 v1.1.5');
 console.log('  롤 클라이언트를 기다리는 중...');
 console.log('  이 창을 닫지 마세요.');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');

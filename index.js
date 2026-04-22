@@ -159,7 +159,7 @@ async function checkFirebase() {
 // ── 챔피언 선택 데이터 수집 ───────────────────────────────────────
 async function handleChampSelect() {
   try {
-    const session = await lcu('/lol/champ-select/v1/session');
+    const session = await lcu('/lol-champ-select/v1/session');
 
     const mapPlayer = p => ({
       cellId:    p.cellId,
@@ -196,7 +196,7 @@ async function handleEndOfGame() {
       }
     } catch (_) {}
 
-    const eog = await lcu('/lol/end-of-game/v1/eog-stats-block');
+    const eog = await lcu('/lol-end-of-game/v1/eog-stats-block');
     if (!eog?.teams) return;
 
     const winTeam  = eog.teams.find(t => t.isWinningTeam);
@@ -242,7 +242,7 @@ async function handleEndOfGame() {
 async function poll() {
   if (!baseUrl) return;
   try {
-    const phase = await lcu('/lol/gameflow/v1/phase');
+    const phase = await lcu('/lol-gameflow/v1/gameflow-phase');
 
     if (phase !== lastPhase) {
       log(`페이즈 변경: ${lastPhase ?? '-'} → ${phase}`);
@@ -299,7 +299,7 @@ connector.on('connect', async data => {
   log('롤 클라이언트 연결됨 ✅');
 
   try {
-    const me = await lcu('/lol/summoner/v1/current-summoner');
+    const me = await lcu('/lol-summoner/v1/current-summoner');
     log(`접속 계정: ${me.displayName}`);
   } catch (_) {}
 
@@ -331,7 +331,7 @@ connector.on('disconnect', async () => {
 // ── 시작 ─────────────────────────────────────────────────────────
 console.log('');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('  ARAM 브릿지 v1.1.2');
+console.log('  ARAM 브릿지 v1.1.3');
 console.log('  롤 클라이언트를 기다리는 중...');
 console.log('  이 창을 닫지 마세요.');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');

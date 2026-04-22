@@ -1,6 +1,53 @@
-const LCUConnector = require('lcu-connector');
 const axios        = require('axios');
 const https        = require('https');
+const fs           = require('fs');
+const path         = require('path');
+const { EventEmitter } = require('events');
+const { execSync }     = require('child_process');
+
+// ── lockfile 기반 LCU 커넥터 (wmic 없이 동작) ────────────────────
+class LockfileConnector extends EventEmitter {
+  constructor() { super(); this._connected = false; this._timer = null; }
+
+  start() { this._poll(); this._timer = setInterval(() => this._poll(), 3000); }
+
+  _findLockfile() {
+    const candidates = [
+      'C:\\Riot Games\\League of Legends\\lockfile',
+      'D:\\Riot Games\\League of Legends\\lockfile',
+      path.join(process.env.LOCALAPPDATA || '', '..\\Local\\Riot Games\\League of Legends\\lockfile'),
+    ];
+    for (const p of candidates) {
+      try { if (fs.existsSync(p)) return p; } catch (_) {}
+    }
+    try {
+      const out = execSync(
+        'powershell -NoProfile -Command "try{(Get-Process LeagueClientUx -EA Stop)[0].Path}catch{\'\'}"',
+        { timeout: 4000, encoding: 'utf8' }
+      ).trim();
+      if (out) {
+        const lf = path.join(path.dirname(out), 'lockfile');
+        try { if (fs.existsSync(lf)) return lf; } catch (_) {}
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  _poll() {
+    const lfPath = this._findLockfile();
+    if (lfPath) {
+      try {
+        const [, , port, password, protocol] = fs.readFileSync(lfPath, 'utf8').trim().split(':');
+        if (port && password && !this._connected) {
+          this._connected = true;
+          this.emit('connect', { username: 'riot', password, port, protocol: protocol || 'https' });
+        }
+        return;
+      } catch (_) {}
+    }
+    if (this._connected) { this._connected = false; this.emit('disconnect'); }
+  }
+}
 
 // ── Firebase 설정 ───────────────────────────────────────────────
 const FIREBASE_URL  = 'https://aramchaos-ca022-default-rtdb.asia-southeast1.firebasedatabase.app';
@@ -13,7 +60,7 @@ const lcuClient = axios.create({
 });
 
 // ── 상태 변수 ────────────────────────────────────────────────────
-const connector    = new LCUConnector();
+const connector    = new LockfileConnector();
 let baseUrl        = null;
 let lastPhase      = null;
 let pollTimer      = null;
@@ -284,7 +331,7 @@ connector.on('disconnect', async () => {
 // ── 시작 ─────────────────────────────────────────────────────────
 console.log('');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('  ARAM 브릿지 v1.1.1');
+console.log('  ARAM 브릿지 v1.1.2');
 console.log('  롤 클라이언트를 기다리는 중...');
 console.log('  이 창을 닫지 마세요.');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');

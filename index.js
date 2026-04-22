@@ -164,7 +164,7 @@ async function handleChampSelect() {
     const mapPlayer = p => ({
       cellId:    p.cellId,
       champId:   p.championId,
-      name:      p.summonerName || '',
+      name:      p.riotIdGameName || p.summonerName || '',
       position:  p.assignedPosition || '',
       rerolls:   p.allowedRerolls ?? 2,
       isSelf:    !!p.isSelf
@@ -207,9 +207,9 @@ async function handleEndOfGame() {
       for (const p of (team.players || [])) {
         const s = p.stats || {};
         players.push({
-          summonerName: p.summonerName,
+          summonerName: p.riotIdGameName || p.summonerName || '',
           championId:   p.championId,
-          championName: p.skinName || '',
+          championName: p.championName || p.skinName || '',
           kills:        s.CHAMPIONS_KILLED         || 0,
           deaths:       s.NUM_DEATHS               || 0,
           assists:      s.ASSISTS                  || 0,
@@ -331,7 +331,7 @@ connector.on('disconnect', async () => {
 // ── 시작 ─────────────────────────────────────────────────────────
 console.log('');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('  ARAM 브릿지 v1.1.3');
+console.log('  ARAM 브릿지 v1.1.4');
 console.log('  롤 클라이언트를 기다리는 중...');
 console.log('  이 창을 닫지 마세요.');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');

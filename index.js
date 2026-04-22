@@ -18,6 +18,7 @@ let lastPhase      = null;
 let pollTimer      = null;
 let heartbeatTimer = null;
 let eogSaved       = false;
+let fbErrorLogged  = false; // Firebase 오류 중복 경고 방지
 
 // ── 유틸 ─────────────────────────────────────────────────────────
 function log(msg) {
@@ -33,7 +34,18 @@ async function fbSet(path, data) {
       JSON.stringify(data === null ? null : data),
       { headers: { 'Content-Type': 'application/json' }, timeout: 5000 }
     );
-  } catch (e) {}
+    fbErrorLogged = false; // 성공하면 에러 플래그 초기화
+  } catch (e) {
+    if (!fbErrorLogged) {
+      const status = e.response?.status;
+      if (status === 401 || status === 403) {
+        log('⛔ Firebase 권한 오류 — Firebase 보안 규칙을 확인하세요.');
+      } else {
+        log('⚠️  Firebase 전송 실패 — 인터넷 연결 또는 방화벽을 확인하세요.');
+      }
+      fbErrorLogged = true;
+    }
+  }
 }
 
 async function fbGet(path) {
@@ -48,8 +60,6 @@ async function lcu(path) {
 }
 
 // ── 하트비트 ──────────────────────────────────────────────────────
-// 5초마다 타임스탬프 갱신 → 사이트에서 10초 이상 미갱신 시 "없음" 표시
-// 강제 종료되어도 10초 안에 자동으로 "브릿지 없음"으로 전환됨
 function startHeartbeat() {
   fbSet('session/bridgeHeartbeat', Date.now());
   heartbeatTimer = setInterval(() => fbSet('session/bridgeHeartbeat', Date.now()), 5000);
@@ -58,6 +68,42 @@ function startHeartbeat() {
 function stopHeartbeat() {
   if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
   fbSet('session/bridgeHeartbeat', null).catch(() => {});
+}
+
+// ── 종료 정리 ─────────────────────────────────────────────────────
+async function cleanup() {
+  if (pollTimer)      { clearInterval(pollTimer);      pollTimer      = null; }
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+  try {
+    await Promise.all([
+      axios.put(`${FIREBASE_URL}/session/bridgeConnected.json`, 'false',   { timeout: 2000 }),
+      axios.put(`${FIREBASE_URL}/session/bridgeHeartbeat.json`, 'null',    { timeout: 2000 }),
+    ]);
+  } catch (_) {}
+}
+
+process.on('SIGINT',  async () => { log('브릿지 종료 중...'); await cleanup(); process.exit(0); });
+process.on('SIGTERM', async () => { log('브릿지 종료 중...'); await cleanup(); process.exit(0); });
+
+// ── Firebase 시작 점검 ────────────────────────────────────────────
+async function checkFirebase() {
+  try {
+    await axios.put(
+      `${FIREBASE_URL}/session/bridgeConnected.json`,
+      'false',
+      { headers: { 'Content-Type': 'application/json' }, timeout: 5000 }
+    );
+    log('Firebase 연결 확인 ✅');
+    return true;
+  } catch (e) {
+    const status = e.response?.status;
+    if (status === 401 || status === 403) {
+      log('⛔ Firebase 권한 오류 — Firebase 보안 규칙을 확인하세요.');
+    } else {
+      log('⛔ Firebase 연결 실패 — 인터넷 연결 또는 방화벽을 확인하세요.');
+    }
+    return false;
+  }
 }
 
 // ── 챔피언 선택 데이터 수집 ───────────────────────────────────────
@@ -236,10 +282,10 @@ connector.on('disconnect', async () => {
 // ── 시작 ─────────────────────────────────────────────────────────
 console.log('');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('  ARAM 브릿지 v1.0.1');
+console.log('  ARAM 브릿지 v1.0.2');
 console.log('  롤 클라이언트를 기다리는 중...');
 console.log('  이 창을 닫지 마세요.');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 console.log('');
 
-connector.start();
+checkFirebase().then(() => connector.start());

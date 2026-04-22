@@ -3,7 +3,8 @@ const axios        = require('axios');
 const https        = require('https');
 
 // ── Firebase 설정 ───────────────────────────────────────────────
-const FIREBASE_URL = 'https://aramchaos-ca022-default-rtdb.asia-southeast1.firebasedatabase.app';
+const FIREBASE_URL  = 'https://aramchaos-ca022-default-rtdb.asia-southeast1.firebasedatabase.app';
+const BRIDGE_ROOT   = 'bridge'; // session/ 과 분리된 전용 경로
 
 // ── LCU axios (자체 서명 인증서 무시) ───────────────────────────
 const lcuClient = axios.create({
@@ -61,13 +62,13 @@ async function lcu(path) {
 
 // ── 하트비트 ──────────────────────────────────────────────────────
 function startHeartbeat() {
-  fbSet('session/bridgeHeartbeat', Date.now());
-  heartbeatTimer = setInterval(() => fbSet('session/bridgeHeartbeat', Date.now()), 5000);
+  fbSet(`${BRIDGE_ROOT}/heartbeat`, Date.now());
+  heartbeatTimer = setInterval(() => fbSet(`${BRIDGE_ROOT}/heartbeat`, Date.now()), 5000);
 }
 
 function stopHeartbeat() {
   if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
-  fbSet('session/bridgeHeartbeat', null).catch(() => {});
+  fbSet(`${BRIDGE_ROOT}/heartbeat`, null).catch(() => {});
 }
 
 // ── 종료 정리 ─────────────────────────────────────────────────────
@@ -76,8 +77,8 @@ async function cleanup() {
   if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
   try {
     await Promise.all([
-      axios.put(`${FIREBASE_URL}/session/bridgeConnected.json`, 'false',   { timeout: 2000 }),
-      axios.put(`${FIREBASE_URL}/session/bridgeHeartbeat.json`, 'null',    { timeout: 2000 }),
+      axios.put(`${FIREBASE_URL}/${BRIDGE_ROOT}/connected.json`,  'false', { timeout: 2000 }),
+      axios.put(`${FIREBASE_URL}/${BRIDGE_ROOT}/heartbeat.json`,  'null',  { timeout: 2000 }),
     ]);
   } catch (_) {}
 }
@@ -89,7 +90,7 @@ process.on('SIGTERM', async () => { log('브릿지 종료 중...'); await cleanu
 async function checkFirebase() {
   try {
     await axios.put(
-      `${FIREBASE_URL}/session/bridgeConnected.json`,
+      `${FIREBASE_URL}/${BRIDGE_ROOT}/connected.json`,
       'false',
       { headers: { 'Content-Type': 'application/json' }, timeout: 5000 }
     );
@@ -120,7 +121,7 @@ async function handleChampSelect() {
       isSelf:    !!p.isSelf
     });
 
-    await fbSet('session/champSelect', {
+    await fbSet(`${BRIDGE_ROOT}/champSelect`, {
       myTeam:         (session.myTeam    || []).map(mapPlayer),
       theirTeam:      (session.theirTeam || []).map(mapPlayer),
       benchChampions: (session.benchChampions || []).map(c => ({ champId: c.championId })),
@@ -138,7 +139,7 @@ async function handleEndOfGame() {
   try {
     // 다른 브릿지가 이미 저장했는지 확인 (30초 이내 저장 기록 있으면 건너뜀)
     try {
-      const existing = await fbGet('session/eogStats');
+      const existing = await fbGet(`${BRIDGE_ROOT}/eogStats`);
       if (existing?.savedAt && Date.now() - existing.savedAt < 30000) {
         eogSaved = true;
         log('게임 종료 데이터 이미 저장됨 — 건너뜀');
@@ -172,14 +173,14 @@ async function handleEndOfGame() {
       }
     }
 
-    await fbSet('session/eogStats', {
+    await fbSet(`${BRIDGE_ROOT}/eogStats`, {
       players,
       winSide,
       gameId:    eog.gameId || null,
       savedAt:   Date.now()
     });
 
-    await fbSet('session/voteStarted', Date.now());
+    await fbSet(`${BRIDGE_ROOT}/voteStarted`, Date.now());
 
     eogSaved = true;
     log(`게임 종료 저장 완료 ✅  승리: ${winSide === 'blue' ? '🔵 1팀' : '🔴 2팀'}`);
@@ -200,22 +201,22 @@ async function poll() {
 
       switch (phase) {
         case 'ChampSelect':
-          await fbSet('session/gamePhase', 'ChampSelect');
+          await fbSet(`${BRIDGE_ROOT}/gamePhase`,'ChampSelect');
           break;
 
         case 'GameStart':
         case 'InProgress':
-          await fbSet('session/gamePhase', 'InProgress');
-          await fbSet('session/champSelect', null);
+          await fbSet(`${BRIDGE_ROOT}/gamePhase`,'InProgress');
+          await fbSet(`${BRIDGE_ROOT}/champSelect`, null);
           break;
 
         case 'PreEndOfGame':
         case 'WaitingForStats':
-          await fbSet('session/gamePhase', 'EndOfGame');
+          await fbSet(`${BRIDGE_ROOT}/gamePhase`,'EndOfGame');
           break;
 
         case 'EndOfGame':
-          await fbSet('session/gamePhase', 'EndOfGame');
+          await fbSet(`${BRIDGE_ROOT}/gamePhase`,'EndOfGame');
           await handleEndOfGame();
           break;
 
@@ -223,8 +224,8 @@ async function poll() {
         case 'Lobby':
         case 'Matchmaking':
         case 'ReadyCheck':
-          await fbSet('session/gamePhase', phase);
-          await fbSet('session/champSelect', null);
+          await fbSet(`${BRIDGE_ROOT}/gamePhase`,phase);
+          await fbSet(`${BRIDGE_ROOT}/champSelect`, null);
           if (['None', 'Lobby'].includes(phase)) {
             eogSaved = false;
           }
@@ -255,13 +256,13 @@ connector.on('connect', async data => {
 
   // 다른 브릿지가 이미 실행 중인지 경고
   try {
-    const hb = await fbGet('session/bridgeHeartbeat');
+    const hb = await fbGet(`${BRIDGE_ROOT}/heartbeat`);
     if (hb && Date.now() - hb < 10000) {
       log('⚠️  다른 브릿지가 이미 실행 중입니다. 기존 브릿지를 먼저 종료하세요.');
     }
   } catch (_) {}
 
-  await fbSet('session/bridgeConnected', true);
+  await fbSet(`${BRIDGE_ROOT}/connected`, true);
   startHeartbeat();
 
   if (pollTimer) clearInterval(pollTimer);
@@ -276,13 +277,13 @@ connector.on('disconnect', async () => {
   eogSaved  = false;
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   stopHeartbeat();
-  await fbSet('session/bridgeConnected', false).catch(() => {});
+  await fbSet(`${BRIDGE_ROOT}/connected`, false).catch(() => {});
 });
 
 // ── 시작 ─────────────────────────────────────────────────────────
 console.log('');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('  ARAM 브릿지 v1.0.2');
+console.log('  ARAM 브릿지 v1.1.0');
 console.log('  롤 클라이언트를 기다리는 중...');
 console.log('  이 창을 닫지 마세요.');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');

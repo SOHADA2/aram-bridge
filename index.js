@@ -1,3 +1,12 @@
+// ── 도스창 숨기기: 콘솔 없이 자기 자신을 재시작 ────────────────────
+if (process.platform === 'win32' && !process.env.ARAM_BRIDGE_HIDDEN) {
+  require('child_process').spawn(process.execPath, [], {
+    detached: true, windowsHide: true, stdio: 'ignore',
+    env: Object.assign({}, process.env, { ARAM_BRIDGE_HIDDEN: '1' })
+  }).unref();
+  process.exit(0);
+}
+
 const axios        = require('axios');
 const https        = require('https');
 const http         = require('http');

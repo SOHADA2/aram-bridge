@@ -156,6 +156,16 @@ async function checkFirebase() {
   }
 }
 
+// ── 중복 실행 감지 (heartbeat 쓰기 전에 호출해야 자기 자신 오탐 방지) ──
+async function checkDuplicateBridge() {
+  try {
+    const hb = await fbGet(`${BRIDGE_ROOT}/heartbeat`);
+    if (hb && Date.now() - hb < 10000) {
+      log('⚠️  다른 브릿지가 이미 실행 중입니다. 기존 브릿지를 먼저 종료하세요.');
+    }
+  } catch (_) {}
+}
+
 // ── 챔피언 선택 데이터 수집 ───────────────────────────────────────
 async function handleChampSelect() {
   try {
@@ -328,13 +338,7 @@ connector.on('connect', async data => {
     log(`접속 계정: ${me.displayName}`);
   } catch (_) {}
 
-  // 다른 브릿지가 이미 실행 중인지 경고
-  try {
-    const hb = await fbGet(`${BRIDGE_ROOT}/heartbeat`);
-    if (hb && Date.now() - hb < 10000) {
-      log('⚠️  다른 브릿지가 이미 실행 중입니다. 기존 브릿지를 먼저 종료하세요.');
-    }
-  } catch (_) {}
+  // 중복 감지는 startup에서 처리 (여기서 하면 자기 heartbeat 오탐)
 
   await fbSet(`${BRIDGE_ROOT}/connected`, true);
 
@@ -362,7 +366,10 @@ console.log('  이 창을 닫지 마세요.');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 console.log('');
 
-checkFirebase().then((ok) => {
-  if (ok) startHeartbeat();
+checkFirebase().then(async (ok) => {
+  if (ok) {
+    await checkDuplicateBridge(); // heartbeat 쓰기 전에 먼저 체크
+    startHeartbeat();
+  }
   connector.start();
 });

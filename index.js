@@ -1,8 +1,7 @@
 // ── 도스창 숨기기: 콘솔 없이 자기 자신을 재시작 ────────────────────
-if (process.platform === 'win32' && !process.env.ARAM_BRIDGE_HIDDEN) {
-  require('child_process').spawn(process.execPath, [], {
-    detached: true, windowsHide: true, stdio: 'ignore',
-    env: Object.assign({}, process.env, { ARAM_BRIDGE_HIDDEN: '1' })
+if (process.platform === 'win32' && !process.argv.includes('--hidden')) {
+  require('child_process').spawn(process.execPath, ['--hidden'], {
+    detached: true, windowsHide: true, stdio: 'ignore'
   }).unref();
   process.exit(0);
 }
@@ -184,7 +183,9 @@ function startStatusServer() {
     log(`상태 페이지: http://127.0.0.1:${STATUS_PORT}`);
     try {
       const { spawn } = require('child_process');
-      spawn('explorer.exe', [`http://127.0.0.1:${STATUS_PORT}`], { stdio: 'ignore' }).unref();
+      spawn('rundll32.exe', ['url.dll,FileProtocolHandler', `http://127.0.0.1:${STATUS_PORT}`], {
+        detached: true, stdio: 'ignore'
+      }).unref();
     } catch (_) {}
   });
 }

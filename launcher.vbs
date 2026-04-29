@@ -47,5 +47,4 @@ If exe = "" Then
 End If
 
 ' ── 백그라운드 숨김 실행 (브라우저는 exe가 직접 열어줌) ──────────────
-WshShell.Environment("Process")("ARAM_BRIDGE_HIDDEN") = "1"
-WshShell.Run """" & exe & """", 0, False
+WshShell.Run """" & exe & """ --hidden", 0, False

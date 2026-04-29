@@ -170,9 +170,10 @@ function startStatusServer() {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(STATUS_HTML);
   });
-  server.on('error', () => {}); // 포트 충돌 시 무시
+  server.on('error', () => {}); // 포트 충돌 시 무시 (이미 실행 중인 경우)
   server.listen(STATUS_PORT, '127.0.0.1', () => {
     log(`상태 페이지: http://localhost:${STATUS_PORT}`);
+    try { execSync(`cmd /c start "" http://localhost:${STATUS_PORT}`, { windowsHide: true }); } catch (_) {}
   });
 }
 

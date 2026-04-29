@@ -23,7 +23,7 @@ If isRunning Then
   ElseIf ans = 7 Then  ' 아니오 → 재시작
     WshShell.Run "taskkill /F /IM aram-bridge*.exe", 0, True
     WScript.Sleep 1000
-    ' 아래 시작 로직으로 계속 진행 (브라우저는 이미 열려 있음)
+    ' 아래 시작 로직으로 계속 진행 (브라우저는 exe가 직접 열어줌)
   Else                 ' 취소 → 그냥 닫기
     WScript.Quit
   End If
@@ -46,7 +46,5 @@ If exe = "" Then
   WScript.Quit
 End If
 
-' ── 백그라운드 숨김 실행 후 상태 페이지 열기 ─────────────────────────
+' ── 백그라운드 숨김 실행 (브라우저는 exe가 직접 열어줌) ──────────────
 WshShell.Run """" & exe & """", 0, False
-WScript.Sleep 1500
-WshShell.Run "cmd /c start http://localhost:7654", 0, False

@@ -214,14 +214,24 @@ async function handleEndOfGame() {
           summonerName: p.riotIdGameName || p.summonerName || champPickNames[p.championId] || '',
           championId:   p.championId,
           championName: p.championName || p.skinName || '',
-          kills:        s.CHAMPIONS_KILLED         || 0,
-          deaths:       s.NUM_DEATHS               || 0,
-          assists:      s.ASSISTS                  || 0,
+          kills:        s.CHAMPIONS_KILLED                || 0,
+          deaths:       s.NUM_DEATHS                      || 0,
+          assists:      s.ASSISTS                         || 0,
           damage:       s.TOTAL_DAMAGE_DEALT_TO_CHAMPIONS || 0,
-          gold:         s.GOLD_EARNED              || 0,
+          gold:         s.GOLD_EARNED                     || 0,
           cs:           (s.MINIONS_KILLED || 0) + (s.NEUTRAL_MINIONS_KILLED || 0),
           teamId:       team.teamId,
-          isWin:        !!team.isWinningTeam
+          isWin:        !!team.isWinningTeam,
+          // 아이템 (6슬롯, 0 제외)
+          items:    [s.ITEM0,s.ITEM1,s.ITEM2,s.ITEM3,s.ITEM4,s.ITEM5].filter(i => i > 0),
+          // 증강 (ARAM 프리즈매틱, 없으면 빈 배열)
+          augments: [s.PLAYER_AUGMENT_1,s.PLAYER_AUGMENT_2,s.PLAYER_AUGMENT_3,s.PLAYER_AUGMENT_4].filter(i => i > 0),
+          // 멀티킬 이벤트
+          doubleKills: s.DOUBLE_KILLS || 0,
+          tripleKills: s.TRIPLE_KILLS || 0,
+          quadraKills: s.QUADRA_KILLS || 0,
+          pentaKills:  s.PENTA_KILLS  || 0,
+          firstBlood:  (s.FIRST_BLOOD_KILL || 0) === 1,
         });
       }
     }
@@ -229,8 +239,9 @@ async function handleEndOfGame() {
     await fbSet(`${BRIDGE_ROOT}/eogStats`, {
       players,
       winSide,
-      gameId:    eog.gameId || null,
-      savedAt:   Date.now()
+      gameId:   eog.gameId    || null,
+      gameTime: eog.gameLength || 0,
+      savedAt:  Date.now()
     });
 
     await fbSet(`${BRIDGE_ROOT}/voteStarted`, Date.now());
@@ -345,7 +356,7 @@ connector.on('disconnect', async () => {
 // ── 시작 ─────────────────────────────────────────────────────────
 console.log('');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('  ARAM 브릿지 v1.1.5');
+console.log('  ARAM 브릿지 v1.1.6');
 console.log('  롤 클라이언트를 기다리는 중...');
 console.log('  이 창을 닫지 마세요.');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');

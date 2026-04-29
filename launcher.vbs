@@ -1,20 +1,28 @@
-Dim fso, dir, exe, f, fo, WshShell
-Set fso     = CreateObject("Scripting.FileSystemObject")
+Dim fso, dir, exe, f, fo, WshShell, taskOut
+Set fso      = CreateObject("Scripting.FileSystemObject")
 Set WshShell = CreateObject("WScript.Shell")
 dir = fso.GetParentFolderName(WScript.ScriptFullName)
 
-' ── 이미 실행 중인 브릿지 감지 ──────────────────────────────────────
-Dim taskOut
+' ── 실행 중 여부 확인 ────────────────────────────────────────────────
 taskOut = WshShell.Exec("tasklist /FI ""IMAGENAME eq aram-bridge*"" /NH").StdOut.ReadAll()
-If InStr(taskOut, "aram-bridge") > 0 Then
+Dim isRunning : isRunning = (InStr(taskOut, "aram-bridge") > 0)
+
+If isRunning Then
+  ' ── 이미 실행 중 → 종료 or 재시작 선택 ─────────────────────────────
   Dim ans
-  ans = MsgBox("이미 실행 중인 ARAM 브릿지가 있어요!" & Chr(13) & Chr(13) & _
-               "기존 브릿지를 종료하고 새로 시작할까요?", _
-               36, "ARAM 브릿지")
-  If ans = 6 Then  ' 예
+  ans = MsgBox("ARAM 브릿지가 실행 중이에요." & Chr(13) & Chr(13) & _
+               "[예]  →  브릿지 종료" & Chr(13) & _
+               "[아니오]  →  재시작 (기존 종료 후 새로 시작)", _
+               3, "ARAM 브릿지")
+  If ans = 6 Then      ' 예 → 종료만
+    WshShell.Run "taskkill /F /IM aram-bridge*.exe", 0, True
+    MsgBox "브릿지를 종료했어요.", 64, "ARAM 브릿지"
+    WScript.Quit
+  ElseIf ans = 7 Then  ' 아니오 → 재시작
     WshShell.Run "taskkill /F /IM aram-bridge*.exe", 0, True
     WScript.Sleep 1000
-  Else
+    ' 아래 시작 로직으로 계속 진행
+  Else                 ' 취소
     WScript.Quit
   End If
 End If
@@ -41,5 +49,5 @@ WshShell.Run """" & exe & """", 0, False
 
 MsgBox "ARAM 브릿지가 백그라운드에서 시작됐어요!" & Chr(13) & Chr(13) & _
        "웹사이트 상단의  🟢 브릿지 연결됨  표시로 확인하세요." & Chr(13) & Chr(13) & _
-       "종료할 땐 같은 폴더의  stop.vbs  를 실행하세요.", _
+       "종료하거나 재시작하려면 이 파일을 다시 실행하세요.", _
        64, "ARAM 브릿지"

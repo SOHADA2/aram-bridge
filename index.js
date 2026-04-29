@@ -1,10 +1,3 @@
-// ── 도스창 숨기기: PowerShell로 자기 콘솔 창 숨김 (약 1초 후 사라짐) ──
-if (process.platform === 'win32') {
-  require('child_process').spawn('powershell', [
-    '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command',
-    'Add-Type -MemberDefinition \'[DllImport("kernel32.dll")]public static extern IntPtr GetConsoleWindow();[DllImport("user32.dll")]public static extern bool ShowWindow(IntPtr h,int n);\' -Name W -Namespace N -EA SilentlyContinue;[N.W]::ShowWindow([N.W]::GetConsoleWindow(),0)'
-  ], { windowsHide: true, detached: true, stdio: 'ignore' }).unref();
-}
 
 const axios        = require('axios');
 const https        = require('https');
@@ -86,10 +79,11 @@ const STATUS_HTML = `<!DOCTYPE html>
 <title>ARAM 브릿지</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',system-ui,sans-serif;background:#0d1117;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh}
-.card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:32px;width:360px}
-.hdr{display:flex;align-items:center;gap:14px;margin-bottom:24px;padding-bottom:20px;border-bottom:1px solid #21262d}
-.ico{font-size:36px}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0d1117;color:#e6edf3;display:flex;justify-content:center;padding:40px 16px;min-height:100vh}
+.wrap{width:380px;display:flex;flex-direction:column;gap:12px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px}
+.hdr{display:flex;align-items:center;gap:14px;margin-bottom:20px;padding-bottom:18px;border-bottom:1px solid #21262d}
+.ico{font-size:34px}
 .title{font-size:18px;font-weight:700}
 .sub{font-size:12px;color:#8b949e;margin-top:2px}
 .rows{display:flex;flex-direction:column;gap:8px}
@@ -100,37 +94,66 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#0d1117;color:#e6edf
 .green{background:#3fb950;box-shadow:0 0 6px #3fb95080}
 .gray{background:#484f58}
 .red{background:#f85149}
-.foot{margin-top:16px;font-size:11px;color:#484f58;text-align:center}
+.foot{margin-top:14px;font-size:11px;color:#484f58;text-align:center}
+.info-card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:20px;font-size:12px;color:#8b949e;line-height:1.7}
+.info-card b{color:#c9d1d9;font-size:12px}
+.info-section{margin-bottom:14px}
+.info-section:last-child{margin-bottom:0}
+.info-title{font-size:11px;font-weight:700;color:#58a6ff;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.stopbtn{width:100%;padding:10px;background:#21262d;border:1px solid #30363d;border-radius:8px;color:#f85149;font-size:13px;font-weight:600;cursor:pointer;margin-top:2px}
+.stopbtn:hover{background:#2a1f1f;border-color:#f85149}
 </style>
 </head>
 <body>
-<div class="card">
-  <div class="hdr">
-    <div class="ico">🎮</div>
-    <div>
-      <div class="title">ARAM 브릿지</div>
-      <div class="sub" id="ver">로딩 중...</div>
+<div class="wrap">
+  <div class="card">
+    <div class="hdr">
+      <div class="ico">🎮</div>
+      <div>
+        <div class="title">ARAM 브릿지</div>
+        <div class="sub" id="ver">로딩 중...</div>
+      </div>
+    </div>
+    <div class="rows">
+      <div class="row">
+        <span class="lbl">브릿지 프로세스</span>
+        <span class="val" id="proc"><span class="dot green"></span>실행 중</span>
+      </div>
+      <div class="row">
+        <span class="lbl">롤 클라이언트</span>
+        <span class="val" id="lcu"><span class="dot gray"></span>대기 중</span>
+      </div>
+      <div class="row">
+        <span class="lbl">게임 페이즈</span>
+        <span class="val" id="phase" style="color:#8b949e">-</span>
+      </div>
+      <div class="row">
+        <span class="lbl">Firebase 연결</span>
+        <span class="val" id="fb"><span class="dot gray"></span>확인 중</span>
+      </div>
+    </div>
+    <div class="foot" id="foot">연결 중...</div>
+    <button id="stopBtn" class="stopbtn" onclick="stopBridge()">브릿지 종료</button>
+  </div>
+
+  <div class="info-card">
+    <div class="info-section">
+      <div class="info-title">브릿지란?</div>
+      롤 클라이언트(LCU)의 게임 데이터를 실시간으로 <b>ARAM 내전 사이트</b>에 전송하는 프로그램입니다.
+      브릿지가 켜져 있어야 게임 페이즈 감지, 경기 자동 저장, EOG 투표 등이 정상 동작합니다.
+    </div>
+    <div class="info-section">
+      <div class="info-title">누가 켜야 하나요?</div>
+      <b>내전 진행자(방장) PC</b> 한 대에서만 실행하면 됩니다.
+      롤 클라이언트가 켜진 상태에서 함께 실행해주세요.
+    </div>
+    <div class="info-section">
+      <div class="info-title">다른 사람에게 넘기려면?</div>
+      1. 이 페이지에서 <b>브릿지 종료</b> 버튼을 눌러 종료<br>
+      2. 새 진행자 PC에 ZIP 파일 전달 후 <b>launcher.vbs</b> 실행<br>
+      3. 브릿지가 연결되면 사이트가 자동으로 인식합니다
     </div>
   </div>
-  <div class="rows">
-    <div class="row">
-      <span class="lbl">브릿지 프로세스</span>
-      <span class="val" id="proc"><span class="dot green"></span>실행 중</span>
-    </div>
-    <div class="row">
-      <span class="lbl">롤 클라이언트</span>
-      <span class="val" id="lcu"><span class="dot gray"></span>대기 중</span>
-    </div>
-    <div class="row">
-      <span class="lbl">게임 페이즈</span>
-      <span class="val" id="phase" style="color:#8b949e">-</span>
-    </div>
-    <div class="row">
-      <span class="lbl">Firebase 연결</span>
-      <span class="val" id="fb"><span class="dot gray"></span>확인 중</span>
-    </div>
-  </div>
-  <div class="foot" id="foot">연결 중...</div>
 </div>
 <script>
 var fails=0;
@@ -149,9 +172,23 @@ function refresh(){
   }).catch(function(){
     if(++fails>=3){
       document.getElementById('proc').innerHTML='<span class="dot red"></span>종료됨';
-      document.getElementById('foot').textContent='⚠️ 브릿지가 종료되었습니다. 창을 닫으세요.';
+      document.getElementById('foot').textContent='브릿지가 종료되었습니다. 창을 닫으세요.';
+      document.getElementById('stopBtn').style.display='none';
     }
   });
+}
+function stopBridge(){
+  if(!confirm('브릿지를 종료할까요?')) return;
+  fetch('/api/shutdown',{method:'POST'}).catch(function(){});
+  document.getElementById('proc').innerHTML='<span class="dot red"></span>종료 중...';
+  document.getElementById('stopBtn').disabled=true;
+  setTimeout(function(){
+    window.open('','_self');
+    window.close();
+    setTimeout(function(){
+      document.getElementById('foot').textContent='브릿지가 종료되었습니다. 이 탭을 닫아주세요.';
+    }, 500);
+  }, 800);
 }
 refresh();
 setInterval(refresh,3000);
@@ -173,6 +210,12 @@ function startStatusServer() {
         fbOk,
         now:       Date.now()
       }));
+      return;
+    }
+    if (req.url === '/api/shutdown' && req.method === 'POST') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+      setTimeout(() => process.exit(0), 300);
       return;
     }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });

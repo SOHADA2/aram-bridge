@@ -182,7 +182,10 @@ function startStatusServer() {
   server.on('error', () => {}); // 포트 충돌 시 무시 (이미 실행 중인 경우)
   server.listen(STATUS_PORT, () => {  // 0.0.0.0 — IPv4/IPv6 모두 바인딩
     log(`상태 페이지: http://127.0.0.1:${STATUS_PORT}`);
-    try { execSync(`cmd /c start "" http://127.0.0.1:${STATUS_PORT}`, { windowsHide: true }); } catch (_) {}
+    try {
+      const { spawn } = require('child_process');
+      spawn('explorer.exe', [`http://127.0.0.1:${STATUS_PORT}`], { stdio: 'ignore' }).unref();
+    } catch (_) {}
   });
 }
 

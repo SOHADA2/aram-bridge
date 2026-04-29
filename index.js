@@ -5,7 +5,7 @@ if (process.platform === 'win32' && !process.argv.includes('--hidden')) {
     detached: true, windowsHide: true, stdio: 'ignore'
   }).unref();
   // 서버 준비 대기 (~1초) 후 브라우저 오픈 (첫 번째 인스턴스에서 열어야 동작)
-  spawnSync('ping', ['-n', '2', '127.0.0.1'], { stdio: 'ignore', windowsHide: true });
+  spawnSync('ping', ['-n', '4', '127.0.0.1'], { stdio: 'ignore', windowsHide: true }); // ~3초 대기
   spawn('cmd', ['/c', 'start', '', 'http://127.0.0.1:7654'], {
     detached: true, windowsHide: true, stdio: 'ignore'
   }).unref();

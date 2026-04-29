@@ -1,12 +1,12 @@
 {
   "name": "aram-bridge",
-  "version": "1.1.11",
+  "version": "1.1.12",
   "description": "ARAM 내전 LCU 브릿지 — 롤 클라이언트 데이터를 Firebase로 전송",
   "main": "index.js",
   "bin": "index.js",
   "scripts": {
     "start": "node index.js",
-    "build": "node -e \"const {execSync}=require('child_process');const v=require('./package.json').version;execSync('pkg . --targets node18-win-x64 --output dist/aram-bridge-v'+v+'.exe',{stdio:'inherit'})\""
+    "build": "node -e \"const {execSync}=require('child_process');const fs=require('fs');const v=require('./package.json').version;const out='dist/aram-bridge-v'+v+'.exe';execSync('pkg . --targets node18-win-x64 --output '+out,{stdio:'inherit'});const buf=fs.readFileSync(out);const pe=buf.readUInt32LE(0x3C);buf.writeUInt16LE(2,pe+0x5C);fs.writeFileSync(out,buf);console.log('PE subsystem patched: WINDOWS (no console window)')\""
   },
   "pkg": {
     "targets": ["node18-win-x64"],

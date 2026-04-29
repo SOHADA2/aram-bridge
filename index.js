@@ -177,9 +177,18 @@ function startStatusServer() {
 }
 
 // ── 유틸 ─────────────────────────────────────────────────────────
+const LOG_PATH = path.join(
+  process.pkg ? path.dirname(process.execPath) : __dirname,
+  'aram-bridge.log'
+);
+const _logStream = (() => {
+  try { return fs.createWriteStream(LOG_PATH, { flags: 'a' }); } catch (_) { return null; }
+})();
+
 function log(msg) {
-  const t = new Date().toLocaleTimeString('ko-KR');
-  console.log(`[${t}] ${msg}`);
+  const line = `[${new Date().toLocaleTimeString('ko-KR')}] ${msg}`;
+  if (_logStream) try { _logStream.write(line + '\n'); } catch (_) {}
+  try { process.stdout.write(line + '\n'); } catch (_) {}
 }
 
 // ── Firebase 헬퍼 ─────────────────────────────────────────────────
@@ -471,12 +480,8 @@ connector.on('disconnect', async () => {
 
 // ── 시작 ─────────────────────────────────────────────────────────
 startStatusServer();
-console.log('');
-console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log(`  ARAM 브릿지 v${require('./package.json').version}`);
-console.log('  롤 클라이언트를 기다리는 중...');
-console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('');
+log(`ARAM 브릿지 v${require('./package.json').version} 시작`);
+log(`로그 파일: ${LOG_PATH}`);
 
 checkFirebase().then(async (ok) => {
   if (ok) {

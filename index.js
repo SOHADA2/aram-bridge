@@ -1,5 +1,6 @@
 const axios        = require('axios');
 const https        = require('https');
+const http         = require('http');
 const fs           = require('fs');
 const path         = require('path');
 const { EventEmitter } = require('events');
@@ -67,6 +68,113 @@ let pollTimer      = null;
 let heartbeatTimer = null;
 let eogSaved       = false;
 let fbErrorLogged  = false; // Firebase 오류 중복 경고 방지
+let fbOk           = null;  // null=확인중, true=정상, false=오류
+
+// ── 로컬 상태 페이지 ──────────────────────────────────────────────
+const STATUS_HTML = `<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ARAM 브릿지</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0d1117;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh}
+.card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:32px;width:360px}
+.hdr{display:flex;align-items:center;gap:14px;margin-bottom:24px;padding-bottom:20px;border-bottom:1px solid #21262d}
+.ico{font-size:36px}
+.title{font-size:18px;font-weight:700}
+.sub{font-size:12px;color:#8b949e;margin-top:2px}
+.rows{display:flex;flex-direction:column;gap:8px}
+.row{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#0d1117;border-radius:8px}
+.lbl{font-size:12px;color:#8b949e}
+.val{font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.green{background:#3fb950;box-shadow:0 0 6px #3fb95080}
+.gray{background:#484f58}
+.red{background:#f85149}
+.foot{margin-top:16px;font-size:11px;color:#484f58;text-align:center}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="hdr">
+    <div class="ico">🎮</div>
+    <div>
+      <div class="title">ARAM 브릿지</div>
+      <div class="sub" id="ver">로딩 중...</div>
+    </div>
+  </div>
+  <div class="rows">
+    <div class="row">
+      <span class="lbl">브릿지 프로세스</span>
+      <span class="val" id="proc"><span class="dot green"></span>실행 중</span>
+    </div>
+    <div class="row">
+      <span class="lbl">롤 클라이언트</span>
+      <span class="val" id="lcu"><span class="dot gray"></span>대기 중</span>
+    </div>
+    <div class="row">
+      <span class="lbl">게임 페이즈</span>
+      <span class="val" id="phase" style="color:#8b949e">-</span>
+    </div>
+    <div class="row">
+      <span class="lbl">Firebase 연결</span>
+      <span class="val" id="fb"><span class="dot gray"></span>확인 중</span>
+    </div>
+  </div>
+  <div class="foot" id="foot">연결 중...</div>
+</div>
+<script>
+var fails=0;
+function refresh(){
+  fetch('/api/status').then(function(r){return r.json();}).then(function(d){
+    fails=0;
+    document.getElementById('ver').textContent='v'+d.version;
+    var lcu=document.getElementById('lcu');
+    lcu.innerHTML=d.connected?'<span class="dot green"></span>연결됨':'<span class="dot gray"></span>대기 중';
+    var ph=document.getElementById('phase');
+    ph.textContent=d.phase||'-';
+    ph.style.color=d.phase?'#e6edf3':'#8b949e';
+    var fb=document.getElementById('fb');
+    fb.innerHTML=d.fbOk===null?'<span class="dot gray"></span>확인 중':d.fbOk?'<span class="dot green"></span>정상':'<span class="dot red"></span>오류';
+    document.getElementById('foot').textContent='마지막 갱신: '+new Date(d.now).toLocaleTimeString('ko-KR');
+  }).catch(function(){
+    if(++fails>=3){
+      document.getElementById('proc').innerHTML='<span class="dot red"></span>종료됨';
+      document.getElementById('foot').textContent='⚠️ 브릿지가 종료되었습니다. 창을 닫으세요.';
+    }
+  });
+}
+refresh();
+setInterval(refresh,3000);
+</script>
+</body>
+</html>`;
+
+const STATUS_PORT = 7654;
+
+function startStatusServer() {
+  const ver = require('./package.json').version;
+  const server = http.createServer((req, res) => {
+    if (req.url === '/api/status') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        version:   ver,
+        connected: !!baseUrl,
+        phase:     lastPhase || null,
+        fbOk,
+        now:       Date.now()
+      }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(STATUS_HTML);
+  });
+  server.on('error', () => {}); // 포트 충돌 시 무시
+  server.listen(STATUS_PORT, '127.0.0.1', () => {
+    log(`상태 페이지: http://localhost:${STATUS_PORT}`);
+  });
+}
 
 // ── 유틸 ─────────────────────────────────────────────────────────
 function log(msg) {
@@ -82,8 +190,10 @@ async function fbSet(path, data) {
       JSON.stringify(data === null ? null : data),
       { headers: { 'Content-Type': 'application/json' }, timeout: 5000 }
     );
-    fbErrorLogged = false; // 성공하면 에러 플래그 초기화
+    fbErrorLogged = false;
+    fbOk = true;
   } catch (e) {
+    fbOk = false;
     if (!fbErrorLogged) {
       const status = e.response?.status;
       if (status === 401 || status === 403) {
@@ -143,9 +253,11 @@ async function checkFirebase() {
       'false',
       { headers: { 'Content-Type': 'application/json' }, timeout: 5000 }
     );
+    fbOk = true;
     log('Firebase 연결 확인 ✅');
     return true;
   } catch (e) {
+    fbOk = false;
     const status = e.response?.status;
     if (status === 401 || status === 403) {
       log('⛔ Firebase 권한 오류 — Firebase 보안 규칙을 확인하세요.');
@@ -358,11 +470,11 @@ connector.on('disconnect', async () => {
 });
 
 // ── 시작 ─────────────────────────────────────────────────────────
+startStatusServer();
 console.log('');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 console.log(`  ARAM 브릿지 v${require('./package.json').version}`);
 console.log('  롤 클라이언트를 기다리는 중...');
-console.log('  이 창을 닫지 마세요.');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 console.log('');
 

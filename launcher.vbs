@@ -8,7 +8,9 @@ taskOut = WshShell.Exec("tasklist /FI ""IMAGENAME eq aram-bridge*"" /NH").StdOut
 Dim isRunning : isRunning = (InStr(taskOut, "aram-bridge") > 0)
 
 If isRunning Then
-  ' ── 이미 실행 중 → 종료 or 재시작 선택 ─────────────────────────────
+  ' ── 이미 실행 중 → 상태 페이지 열고 선택 ─────────────────────────
+  WshShell.Run "cmd /c start http://localhost:7654", 0, False
+  WScript.Sleep 300
   Dim ans
   ans = MsgBox("ARAM 브릿지가 실행 중이에요." & Chr(13) & Chr(13) & _
                "[예]  →  브릿지 종료" & Chr(13) & _
@@ -21,8 +23,8 @@ If isRunning Then
   ElseIf ans = 7 Then  ' 아니오 → 재시작
     WshShell.Run "taskkill /F /IM aram-bridge*.exe", 0, True
     WScript.Sleep 1000
-    ' 아래 시작 로직으로 계속 진행
-  Else                 ' 취소
+    ' 아래 시작 로직으로 계속 진행 (브라우저는 이미 열려 있음)
+  Else                 ' 취소 → 그냥 닫기
     WScript.Quit
   End If
 End If
@@ -44,10 +46,7 @@ If exe = "" Then
   WScript.Quit
 End If
 
-' ── 백그라운드 숨김 실행 ──────────────────────────────────────────────
+' ── 백그라운드 숨김 실행 후 상태 페이지 열기 ─────────────────────────
 WshShell.Run """" & exe & """", 0, False
-
-MsgBox "ARAM 브릿지가 백그라운드에서 시작됐어요!" & Chr(13) & Chr(13) & _
-       "웹사이트 상단의  🟢 브릿지 연결됨  표시로 확인하세요." & Chr(13) & Chr(13) & _
-       "종료하거나 재시작하려면 이 파일을 다시 실행하세요.", _
-       64, "ARAM 브릿지"
+WScript.Sleep 1500
+WshShell.Run "cmd /c start http://localhost:7654", 0, False

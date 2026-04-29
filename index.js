@@ -126,8 +126,8 @@ async function cleanup() {
   if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
   try {
     await Promise.all([
-      axios.put(`${FIREBASE_URL}/${BRIDGE_ROOT}/connected.json`,  'false', { timeout: 2000 }),
-      axios.put(`${FIREBASE_URL}/${BRIDGE_ROOT}/heartbeat.json`,  'null',  { timeout: 2000 }),
+      axios.put(`${FIREBASE_URL}/${BRIDGE_ROOT}/connected.json`,  JSON.stringify(false), { timeout: 2000 }),
+      axios.put(`${FIREBASE_URL}/${BRIDGE_ROOT}/heartbeat.json`,  JSON.stringify(null),  { timeout: 2000 }),
     ]);
   } catch (_) {}
 }

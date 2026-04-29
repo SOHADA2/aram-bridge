@@ -1,15 +1,9 @@
-// ── 도스창 숨기기: 2번째 인스턴스를 숨겨서 실행, 브라우저는 여기서 염 ──
-if (process.platform === 'win32' && !process.argv.includes('--hidden')) {
-  const { spawn, spawnSync } = require('child_process');
-  spawn(process.execPath, ['--hidden'], {
-    detached: true, windowsHide: true, stdio: 'ignore'
-  }).unref();
-  // 서버 준비 대기 (~1초) 후 브라우저 오픈 (첫 번째 인스턴스에서 열어야 동작)
-  spawnSync('ping', ['-n', '4', '127.0.0.1'], { stdio: 'ignore', windowsHide: true }); // ~3초 대기
-  spawn('cmd', ['/c', 'start', '', 'http://127.0.0.1:7654'], {
-    detached: true, windowsHide: true, stdio: 'ignore'
-  }).unref();
-  process.exit(0);
+// ── 도스창 숨기기: PowerShell로 자기 콘솔 창 숨김 (약 1초 후 사라짐) ──
+if (process.platform === 'win32') {
+  require('child_process').spawn('powershell', [
+    '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command',
+    'Add-Type -MemberDefinition \'[DllImport("kernel32.dll")]public static extern IntPtr GetConsoleWindow();[DllImport("user32.dll")]public static extern bool ShowWindow(IntPtr h,int n);\' -Name W -Namespace N -EA SilentlyContinue;[N.W]::ShowWindow([N.W]::GetConsoleWindow(),0)'
+  ], { windowsHide: true, detached: true, stdio: 'ignore' }).unref();
 }
 
 const axios        = require('axios');
@@ -188,9 +182,8 @@ function startStatusServer() {
   server.listen(STATUS_PORT, () => {  // 0.0.0.0 — IPv4/IPv6 모두 바인딩
     log(`상태 페이지: http://127.0.0.1:${STATUS_PORT}`);
     try {
-      const { spawn } = require('child_process');
-      spawn('rundll32.exe', ['url.dll,FileProtocolHandler', `http://127.0.0.1:${STATUS_PORT}`], {
-        detached: true, stdio: 'ignore'
+      require('child_process').spawn('cmd', ['/c', 'start', '', `http://127.0.0.1:${STATUS_PORT}`], {
+        detached: true, windowsHide: true, stdio: 'ignore'
       }).unref();
     } catch (_) {}
   });

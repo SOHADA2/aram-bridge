@@ -276,6 +276,52 @@ async function fbGet(path) {
   return res.data;
 }
 
+// ETag 기반 조건부 GET — 다른 브릿지 동시 실행 시 atomic CAS 용 (v1.1.26~)
+async function fbGetWithEtag(path) {
+  const res = await axios.get(`${FIREBASE_URL}/${path}.json`, {
+    headers: { 'X-Firebase-ETag': 'true' },
+    timeout: 3000,
+  });
+  return { data: res.data, etag: res.headers['etag'] };
+}
+
+// ETag 기반 조건부 PUT — If-Match 가 일치할 때만 쓰기 성공.
+// 다른 브릿지가 먼저 쓴 경우 412 Precondition Failed 발생 → 호출자가 skip 처리.
+// 반환: { ok: true } 성공 / { ok: false, conflict: true } 다른 브릿지 선점 / 그 외 throw
+async function fbSetIfMatch(path, data, etag) {
+  try {
+    await axios.put(
+      `${FIREBASE_URL}/${path}.json`,
+      JSON.stringify(data === null ? null : data),
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'if-match': etag || 'null_etag',
+        },
+        timeout: 5000,
+      }
+    );
+    fbErrorLogged = false;
+    fbOk = true;
+    return { ok: true };
+  } catch (e) {
+    if (e.response?.status === 412) {
+      return { ok: false, conflict: true };
+    }
+    fbOk = false;
+    if (!fbErrorLogged) {
+      const status = e.response?.status;
+      if (status === 401 || status === 403) {
+        log('⛔ Firebase 권한 오류 — Firebase 보안 규칙을 확인하세요.');
+      } else {
+        log('⚠️  Firebase 전송 실패 — 인터넷 연결 또는 방화벽을 확인하세요.');
+      }
+      fbErrorLogged = true;
+    }
+    throw e;
+  }
+}
+
 // ── LCU 요청 ─────────────────────────────────────────────────────
 async function lcu(path) {
   const res = await lcuClient.get(`${baseUrl}${path}`);
@@ -373,18 +419,30 @@ async function handleEndOfGame() {
   if (eogSaved) return;
 
   try {
-    // 다른 브릿지가 이미 저장했는지 확인 (30초 이내 저장 기록 있으면 건너뜀)
+    const eog = await lcu('/lol-end-of-game/v1/eog-stats-block');
+    if (!eog?.teams) return;
+
+    const currentGameId = eog.gameId || null;
+
+    // 다른 브릿지가 이미 저장했는지 확인 (v1.1.26~)
+    // gameId 가 동일하면 같은 게임 — 시간 무관 무조건 건너뜀.
+    // gameId 가 다르면(서로 다른 게임) 새 게임이므로 진행.
+    let _existingEtag = null;
     try {
-      const existing = await fbGet(`${BRIDGE_ROOT}/eogStats`);
-      if (existing?.savedAt && Date.now() - existing.savedAt < 30000) {
+      const { data: existing, etag } = await fbGetWithEtag(`${BRIDGE_ROOT}/eogStats`);
+      _existingEtag = etag;
+      if (existing && currentGameId && existing.gameId === currentGameId) {
         eogSaved = true;
-        log('게임 종료 데이터 이미 저장됨 — 건너뜀');
+        log('동일 gameId 데이터 이미 저장됨 — 건너뜀');
+        return;
+      }
+      // gameId 가 없거나 다르더라도 30초 이내 stale 데이터면 다른 브릿지 진행 중일 수 있음
+      if (existing?.savedAt && Date.now() - existing.savedAt < 30000 && !currentGameId) {
+        eogSaved = true;
+        log('게임 종료 데이터 이미 저장됨 (gameId 미상) — 건너뜀');
         return;
       }
     } catch (_) {}
-
-    const eog = await lcu('/lol-end-of-game/v1/eog-stats-block');
-    if (!eog?.teams) return;
 
     const winTeam  = eog.teams.find(t => t.isWinningTeam);
     const winSide  = winTeam?.teamId === 100 ? 'blue' : 'red';
@@ -423,13 +481,27 @@ async function handleEndOfGame() {
       }
     }
 
-    await fbSet(`${BRIDGE_ROOT}/eogStats`, {
+    // ETag 조건부 PUT — 다른 브릿지가 우리 GET 이후 먼저 쓰면 412 발생 → skip (v1.1.26~)
+    const _eogPayload = {
       players,
       winSide,
       gameId:   eog.gameId    || null,
       gameTime: eog.gameLength || 0,
       savedAt:  Date.now()
-    });
+    };
+    let _writeResult;
+    try {
+      _writeResult = await fbSetIfMatch(`${BRIDGE_ROOT}/eogStats`, _eogPayload, _existingEtag);
+    } catch (e) {
+      log('⚠️  EOG 저장 실패 — 일반 PUT 폴백');
+      await fbSet(`${BRIDGE_ROOT}/eogStats`, _eogPayload);
+      _writeResult = { ok: true };
+    }
+    if (_writeResult && _writeResult.conflict) {
+      eogSaved = true;
+      log('다른 브릿지가 먼저 저장 (ETag 충돌) — 건너뜀');
+      return;
+    }
 
     await fbSet(`${BRIDGE_ROOT}/voteStarted`, Date.now());
 

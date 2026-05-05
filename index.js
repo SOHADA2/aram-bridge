@@ -469,8 +469,8 @@ async function handleEndOfGame() {
           isWin:        !!team.isWinningTeam,
           // 아이템 (6슬롯, 0 제외)
           items:    [s.ITEM0,s.ITEM1,s.ITEM2,s.ITEM3,s.ITEM4,s.ITEM5].filter(i => i > 0),
-          // 증강 (ARAM 프리즈매틱, 없으면 빈 배열)
-          augments: [s.PLAYER_AUGMENT_1,s.PLAYER_AUGMENT_2,s.PLAYER_AUGMENT_3,s.PLAYER_AUGMENT_4].filter(i => i > 0),
+          // 증강 (ARAM 프리즈매틱, 없으면 빈 배열 — 슬롯 수 동적 수집)
+          augments: Object.keys(s).filter(k => /^PLAYER_AUGMENT_\d+$/.test(k)).sort((a,b) => parseInt(a.match(/\d+/)[0])-parseInt(b.match(/\d+/)[0])).map(k => s[k]).filter(i => i > 0),
           // 멀티킬 이벤트
           doubleKills: s.DOUBLE_KILLS || 0,
           tripleKills: s.TRIPLE_KILLS || 0,

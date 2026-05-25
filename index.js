@@ -560,6 +560,11 @@ async function poll() {
           await fbSet(`${BRIDGE_ROOT}/gamePhase`,phase);
           await fbSet(`${BRIDGE_ROOT}/champSelect`, null);
           if (['None', 'Lobby'].includes(phase)) {
+            // 빠르게 로비로 나간 경우 EOG 데이터 마지막 시도
+            if (!eogSaved) {
+              log('빠른 로비 이탈 감지 — EOG 마지막 시도');
+              await handleEndOfGame();
+            }
             eogSaved = false;
           }
           break;
@@ -570,7 +575,7 @@ async function poll() {
       await handleChampSelect();
     }
 
-    if ((phase === 'EndOfGame' || phase === 'PreEndOfGame') && !eogSaved) {
+    if ((phase === 'EndOfGame' || phase === 'PreEndOfGame' || phase === 'WaitingForStats') && !eogSaved) {
       await handleEndOfGame();
     }
 

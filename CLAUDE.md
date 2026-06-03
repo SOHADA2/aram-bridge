@@ -26,7 +26,16 @@ Compress-Archive -Path dist/aram-bridge-vX.X.X.exe, "이 파일을 실행해 주
 gh release create vX.X.X dist/aram-bridge-vX.X.X.zip dist/aram-bridge-vX.X.X.exe --repo SOHADA2/aram-bridge --title "vX.X.X — 변경내용"
 ```
 
-## 현재 구조 (v1.1.25)
+## 비정상 종료 EOG 캡처 (v1.1.29~)
+게임이 `EndOfGame`을 거치지 않고 비정상 종료될 때도 결과를 자동 저장하기 위한 보강:
+- `gameInProgress` 플래그: `InProgress` 진입 시 true, `None`/`Lobby`/disconnect 시 false
+- `activeGameId`: InProgress 때 `/lol-gameflow/v1/session`의 `gameData.gameId` 저장
+- `Reconnect` 페이즈(튕김/창닫힘) + `InProgress→None/Lobby` 직접 점프 시 `handleEndOfGame()` 시도
+- **오저장 방지 가드**: `handleEndOfGame`에서 `eog-stats`의 `gameId`가 `activeGameId`와 다르면 무시
+  (게임 도중 Reconnect면 eog-stats가 '이전 게임' 통계라 자동 skip — v1.1.28 revert 사유 해결)
+- 클라이언트 완전 종료 시엔 LCU 접근 불가 → 로그 경고, 웹앱 수동 흐름(승리팀 선택→투표 브로드캐스트)으로 폴백
+
+## 현재 구조 (v1.1.29)
 - `index.js` — 메인 로직 (LCU 폴링, Firebase 전송, HTTP 서버)
 - `이 파일을 실행해 주세요.vbs` — 런처 (콘솔창 없이 exe 백그라운드 실행, Zone.Identifier 자동 해제)
 - `launcher.vbs` — 위 파일의 원본 (동일 내용)
@@ -64,3 +73,7 @@ gh release create vX.X.X dist/aram-bridge-vX.X.X.zip dist/aram-bridge-vX.X.X.exe
 | v1.1.23 | 상태 페이지 브릿지 안내 카드 추가 |
 | v1.1.24 | VBS 파일명 → '이 파일을 실행해 주세요.vbs' |
 | v1.1.25 | 종료 후 브라우저 탭 자동 닫기 |
+| v1.1.26 | ETag If-Match 조건부 쓰기 (다중 브릿지 EOG 이중 저장 차단) |
+| v1.1.27 | 증강 슬롯 동적 수집 |
+| v1.1.28 | (reverted) 빠른 로비 이탈 EOG 시도 — gameId 가드 없어 이전 게임 오저장 위험으로 되돌림 |
+| v1.1.29 | 비정상 종료(Reconnect/InProgress→None 점프) 시 EOG 자동 캡처 + activeGameId 가드로 이전 게임 오저장 방지 (v1.1.28 재시도, 안전화) |

@@ -68,6 +68,8 @@ let lastPhase      = null;
 let pollTimer      = null;
 let heartbeatTimer = null;
 let eogSaved       = false;
+let gameInProgress = false; // InProgress 진입 시 true — 비정상 종료(Reconnect/점프) 시 EOG 캡처 판단용 (v1.1.29~)
+let activeGameId   = null;  // 현재 진행 중 게임의 gameId — 이전 게임 통계 오저장 방지 (v1.1.29~)
 let fbErrorLogged  = false; // Firebase 오류 중복 경고 방지
 let fbOk           = null;  // null=확인중, true=정상, false=오류
 
@@ -424,6 +426,11 @@ async function handleEndOfGame() {
 
     const currentGameId = eog.gameId || null;
 
+    // 비정상 종료(Reconnect 등) 시 eog-stats 가 '이전 게임' 통계일 수 있음 → 현재 진행 게임과 다르면 무시 (v1.1.29~)
+    if (activeGameId && currentGameId && currentGameId !== activeGameId) {
+      return;
+    }
+
     // 다른 브릿지가 이미 저장했는지 확인 (v1.1.26~)
     // gameId 가 동일하면 같은 게임 — 시간 무관 무조건 건너뜀.
     // gameId 가 다르면(서로 다른 게임) 새 게임이므로 진행.
@@ -529,6 +536,11 @@ async function poll() {
 
         case 'GameStart':
         case 'InProgress':
+          gameInProgress = true;
+          try {
+            const _sess = await lcu('/lol-gameflow/v1/session');
+            if (_sess?.gameData?.gameId) activeGameId = _sess.gameData.gameId;
+          } catch (_) {}
           await fbSet(`${BRIDGE_ROOT}/gamePhase`,'InProgress');
           try {
             const picks = await fbGet(`${BRIDGE_ROOT}/champSelect`);
@@ -546,6 +558,7 @@ async function poll() {
         case 'PreEndOfGame':
         case 'WaitingForStats':
           await fbSet(`${BRIDGE_ROOT}/gamePhase`,'EndOfGame');
+          await handleEndOfGame();
           break;
 
         case 'EndOfGame':
@@ -553,14 +566,27 @@ async function poll() {
           await handleEndOfGame();
           break;
 
+        // 비정상 종료 — 게임 도중 튕김/창 닫힘 시 EndOfGame 을 안 거치고 Reconnect 로 빠질 수 있음 (v1.1.29~)
+        // 게임이 진행 중이었다면 종료 통계를 시도. 아직 게임이 안 끝났으면 eog-stats 의 gameId 가 현재와 달라 자동 skip.
+        case 'Reconnect':
+          await fbSet(`${BRIDGE_ROOT}/gamePhase`, gameInProgress ? 'EndOfGame' : 'Reconnect');
+          if (gameInProgress && !eogSaved) await handleEndOfGame();
+          break;
+
         case 'None':
         case 'Lobby':
         case 'Matchmaking':
         case 'ReadyCheck':
+          // InProgress 에서 EndOfGame 을 거치지 않고 바로 None/Lobby 로 점프한 경우, 마지막으로 한 번 통계 시도 (v1.1.29~)
+          if (gameInProgress && !eogSaved && (phase === 'None' || phase === 'Lobby')) {
+            await handleEndOfGame();
+          }
           await fbSet(`${BRIDGE_ROOT}/gamePhase`,phase);
           await fbSet(`${BRIDGE_ROOT}/champSelect`, null);
           if (['None', 'Lobby'].includes(phase)) {
             eogSaved = false;
+            gameInProgress = false;
+            activeGameId = null;
           }
           break;
       }
@@ -570,7 +596,9 @@ async function poll() {
       await handleChampSelect();
     }
 
-    if ((phase === 'EndOfGame' || phase === 'PreEndOfGame') && !eogSaved) {
+    // EOG 통계 재시도 — 게임이 진행됐고 아직 저장 안 됐으면 종료 계열·비정상(Reconnect) 페이즈에서 계속 시도 (v1.1.29~)
+    if (gameInProgress && !eogSaved &&
+        ['EndOfGame','PreEndOfGame','WaitingForStats','Reconnect'].includes(phase)) {
       await handleEndOfGame();
     }
 
@@ -598,9 +626,15 @@ connector.on('connect', async data => {
 
 connector.on('disconnect', async () => {
   log('롤 클라이언트 종료됨. 재연결 대기 중...');
+  // 게임 진행 중 클라이언트가 완전히 닫히면 LCU 접근 불가 → 자동 저장 불가. 웹앱 수동 흐름으로 폴백 안내.
+  if (gameInProgress && !eogSaved) {
+    log('⚠️ 게임 진행 중 클라이언트 종료 — 자동 저장 불가. 웹앱에서 승리팀 수동 선택으로 진행하세요.');
+  }
   baseUrl   = null;
   lastPhase = null;
   eogSaved  = false;
+  gameInProgress = false;
+  activeGameId = null;
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   // heartbeat는 브릿지 프로세스 생존 신호이므로 LCU 연결과 무관하게 유지
   await fbSet(`${BRIDGE_ROOT}/connected`, false).catch(() => {});

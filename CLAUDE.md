@@ -31,8 +31,10 @@ gh release create vX.X.X dist/aram-bridge-vX.X.X.zip dist/aram-bridge-vX.X.X.exe
 - `gameInProgress` 플래그: `InProgress` 진입 시 true, `None`/`Lobby`/disconnect 시 false
 - `activeGameId`: InProgress 때 `/lol-gameflow/v1/session`의 `gameData.gameId` 저장
 - `Reconnect` 페이즈(튕김/창닫힘) + `InProgress→None/Lobby` 직접 점프 시 `handleEndOfGame()` 시도
-- **오저장 방지 가드**: `handleEndOfGame`에서 `eog-stats`의 `gameId`가 `activeGameId`와 다르면 무시
-  (게임 도중 Reconnect면 eog-stats가 '이전 게임' 통계라 자동 skip — v1.1.28 revert 사유 해결)
+- **오저장 방지 가드 (v1.1.30 안전화)**:
+  - `lastSavedGameId` 가드(모든 경로): 마지막 저장한 gameId와 같으면 무시 → 직전 게임 재캡처 차단 (gameId 캡처 실패해도 동작, 정상 경로도 안전)
+  - `activeGameId` 가드(**비정상 경로 abnormal=true 에만**): eog-stats gameId ≠ 현재 진행 gameId 면 무시. 정상 종료 경로엔 미적용 — 커스텀 게임에서 gameflow↔eog gameId 불일치 시 정상 저장이 막히는 것 방지
+  - `handleEndOfGame(abnormal)` 시그니처: Reconnect/None점프 호출만 abnormal=true
 - 클라이언트 완전 종료 시엔 LCU 접근 불가 → 로그 경고, 웹앱 수동 흐름(승리팀 선택→투표 브로드캐스트)으로 폴백
 
 ## 현재 구조 (v1.1.29)
@@ -77,3 +79,4 @@ gh release create vX.X.X dist/aram-bridge-vX.X.X.zip dist/aram-bridge-vX.X.X.exe
 | v1.1.27 | 증강 슬롯 동적 수집 |
 | v1.1.28 | (reverted) 빠른 로비 이탈 EOG 시도 — gameId 가드 없어 이전 게임 오저장 위험으로 되돌림 |
 | v1.1.29 | 비정상 종료(Reconnect/InProgress→None 점프) 시 EOG 자동 캡처 + activeGameId 가드로 이전 게임 오저장 방지 (v1.1.28 재시도, 안전화) |
+| v1.1.30 | gameId 가드를 **비정상 경로에만** 적용(정상 저장 보호) + lastSavedGameId 가드 추가(직전 게임 재캡처 차단, gameId 캡처 실패해도 안전) |

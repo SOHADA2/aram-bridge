@@ -70,6 +70,7 @@ let heartbeatTimer = null;
 let eogSaved       = false;
 let gameInProgress = false; // InProgress 진입 시 true — 비정상 종료(Reconnect/점프) 시 EOG 캡처 판단용 (v1.1.29~)
 let activeGameId   = null;  // 현재 진행 중 게임의 gameId — 이전 게임 통계 오저장 방지 (v1.1.29~)
+let lastSavedGameId = null; // 마지막으로 저장한 게임 gameId — 직전 게임 재캡처 차단 (v1.1.30~)
 let fbErrorLogged  = false; // Firebase 오류 중복 경고 방지
 let fbOk           = null;  // null=확인중, true=정상, false=오류
 
@@ -417,7 +418,7 @@ async function handleChampSelect() {
 }
 
 // ── 게임 종료 데이터 수집 ─────────────────────────────────────────
-async function handleEndOfGame() {
+async function handleEndOfGame(abnormal = false) {
   if (eogSaved) return;
 
   try {
@@ -426,10 +427,13 @@ async function handleEndOfGame() {
 
     const currentGameId = eog.gameId || null;
 
-    // 비정상 종료(Reconnect 등) 시 eog-stats 가 '이전 게임' 통계일 수 있음 → 현재 진행 게임과 다르면 무시 (v1.1.29~)
-    if (activeGameId && currentGameId && currentGameId !== activeGameId) {
-      return;
-    }
+    // 이미 저장한 게임은 다시 잡지 않음 — 정상 경로 안전(새 게임은 gameId가 달라 통과),
+    // 비정상 경로의 '직전 게임' 오저장도 차단 (gameId 캡처 실패해도 동작) (v1.1.30~)
+    if (currentGameId && currentGameId === lastSavedGameId) return;
+
+    // 비정상 경로(Reconnect/점프)에서만 추가 가드: eog-stats 가 '현재 진행 게임'이 아니면 무시.
+    // 정상 종료 경로엔 적용 안 함 — 커스텀 게임에서 gameflow gameId ↔ eog gameId 불일치 시 정상 저장이 막히는 것 방지 (v1.1.30~)
+    if (abnormal && activeGameId && currentGameId && currentGameId !== activeGameId) return;
 
     // 다른 브릿지가 이미 저장했는지 확인 (v1.1.26~)
     // gameId 가 동일하면 같은 게임 — 시간 무관 무조건 건너뜀.
@@ -513,6 +517,7 @@ async function handleEndOfGame() {
     await fbSet(`${BRIDGE_ROOT}/voteStarted`, Date.now());
 
     eogSaved = true;
+    lastSavedGameId = currentGameId;
     log(`게임 종료 저장 완료 ✅  승리: ${winSide === 'blue' ? '🔵 1팀' : '🔴 2팀'}`);
     log('투표 시작 신호 전송 완료 ✅');
 
@@ -570,7 +575,7 @@ async function poll() {
         // 게임이 진행 중이었다면 종료 통계를 시도. 아직 게임이 안 끝났으면 eog-stats 의 gameId 가 현재와 달라 자동 skip.
         case 'Reconnect':
           await fbSet(`${BRIDGE_ROOT}/gamePhase`, gameInProgress ? 'EndOfGame' : 'Reconnect');
-          if (gameInProgress && !eogSaved) await handleEndOfGame();
+          if (gameInProgress && !eogSaved) await handleEndOfGame(true);
           break;
 
         case 'None':
@@ -579,7 +584,7 @@ async function poll() {
         case 'ReadyCheck':
           // InProgress 에서 EndOfGame 을 거치지 않고 바로 None/Lobby 로 점프한 경우, 마지막으로 한 번 통계 시도 (v1.1.29~)
           if (gameInProgress && !eogSaved && (phase === 'None' || phase === 'Lobby')) {
-            await handleEndOfGame();
+            await handleEndOfGame(true);
           }
           await fbSet(`${BRIDGE_ROOT}/gamePhase`,phase);
           await fbSet(`${BRIDGE_ROOT}/champSelect`, null);
@@ -597,9 +602,10 @@ async function poll() {
     }
 
     // EOG 통계 재시도 — 게임이 진행됐고 아직 저장 안 됐으면 종료 계열·비정상(Reconnect) 페이즈에서 계속 시도 (v1.1.29~)
+    // Reconnect 는 비정상 경로이므로 gameId 가드 적용(abnormal=true), 정상 종료 계열은 미적용
     if (gameInProgress && !eogSaved &&
         ['EndOfGame','PreEndOfGame','WaitingForStats','Reconnect'].includes(phase)) {
-      await handleEndOfGame();
+      await handleEndOfGame(phase === 'Reconnect');
     }
 
   } catch (_) {}

@@ -80,3 +80,4 @@ gh release create vX.X.X dist/aram-bridge-vX.X.X.zip dist/aram-bridge-vX.X.X.exe
 | v1.1.28 | (reverted) 빠른 로비 이탈 EOG 시도 — gameId 가드 없어 이전 게임 오저장 위험으로 되돌림 |
 | v1.1.29 | 비정상 종료(Reconnect/InProgress→None 점프) 시 EOG 자동 캡처 + activeGameId 가드로 이전 게임 오저장 방지 (v1.1.28 재시도, 안전화) |
 | v1.1.30 | gameId 가드를 **비정상 경로에만** 적용(정상 저장 보호) + lastSavedGameId 가드 추가(직전 게임 재캡처 차단, gameId 캡처 실패해도 안전) |
+| v1.1.31 | **롤 클라이언트 재시작 시 재연결 실패 수정** — (1) lockfile port 변경 감지: 비정상 종료로 lockfile 이 남아있다가 재시작 시 새 port 로 덮어써지면, 기존엔 `_connected=true` 라 새 port 를 무시하고 옛 연결로 헛요청만 했음. port 가 바뀌면 disconnect 후 재연결. (2) LCU 응답 연속 4회 실패 시 `forceReset()` — stale lockfile(롤 죽었는데 파일 남음) 상태에서도 강제 해제 후 재연결 시도 |

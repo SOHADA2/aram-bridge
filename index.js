@@ -9,7 +9,7 @@ const { execSync }     = require('child_process');
 
 // ── lockfile 기반 LCU 커넥터 (wmic 없이 동작) ────────────────────
 class LockfileConnector extends EventEmitter {
-  constructor() { super(); this._connected = false; this._timer = null; }
+  constructor() { super(); this._connected = false; this._timer = null; this._curPort = null; }
 
   start() { this._poll(); this._timer = setInterval(() => this._poll(), 3000); }
 
@@ -40,14 +40,34 @@ class LockfileConnector extends EventEmitter {
     if (lfPath) {
       try {
         const [, , port, password, protocol] = fs.readFileSync(lfPath, 'utf8').trim().split(':');
-        if (port && password && !this._connected) {
-          this._connected = true;
-          this.emit('connect', { username: 'riot', password, port, protocol: protocol || 'https' });
+        if (port && password) {
+          // v1.1.31~ 롤 클라이언트 재시작 감지: 비정상 종료로 lockfile 이 남아있다가
+          // 재시작 시 새 port 로 덮어써지는 경우, 이전엔 _connected=true 라서 새 port 를 무시했음.
+          // → port 가 바뀌면 먼저 disconnect 후 새 정보로 재연결한다.
+          if (this._connected && this._curPort !== port) {
+            this._connected = false;
+            this._curPort = null;
+            this.emit('disconnect'); // 옛 연결 정리 (baseUrl/타이머 등)
+          }
+          if (!this._connected) {
+            this._connected = true;
+            this._curPort = port;
+            this.emit('connect', { username: 'riot', password, port, protocol: protocol || 'https' });
+          }
         }
         return;
       } catch (_) {}
     }
-    if (this._connected) { this._connected = false; this.emit('disconnect'); }
+    if (this._connected) { this._connected = false; this._curPort = null; this.emit('disconnect'); }
+  }
+
+  // LCU 응답이 계속 없으면(죽은 lockfile 등) 외부에서 강제로 연결 해제 → 다음 _poll 이 재연결 시도 (v1.1.31~)
+  forceReset() {
+    if (this._connected) {
+      this._connected = false;
+      this._curPort = null;
+      this.emit('disconnect');
+    }
   }
 }
 
@@ -525,10 +545,12 @@ async function handleEndOfGame(abnormal = false) {
 }
 
 // ── 게임 페이즈 폴링 (3초 간격) ───────────────────────────────────
+let _pollFailCount = 0; // LCU 응답 연속 실패 카운트 (v1.1.31~)
 async function poll() {
   if (!baseUrl) return;
   try {
     const phase = await lcu('/lol-gameflow/v1/gameflow-phase');
+    _pollFailCount = 0; // 응답 성공 → 카운트 리셋
 
     if (phase !== lastPhase) {
       log(`페이즈 변경: ${lastPhase ?? '-'} → ${phase}`);
@@ -608,7 +630,16 @@ async function poll() {
       await handleEndOfGame(phase === 'Reconnect');
     }
 
-  } catch (_) {}
+  } catch (_) {
+    // LCU 응답 없음 — 롤이 죽었는데 lockfile 이 stale 로 남은 경우 등.
+    // 연속 4회(약 12초) 실패하면 강제 연결 해제 → 다음 _poll 이 lockfile 재확인 후 재연결 (v1.1.31~)
+    _pollFailCount++;
+    if (_pollFailCount >= 4) {
+      _pollFailCount = 0;
+      log('⚠️ LCU 응답 없음(연속) — 연결 재설정 시도');
+      connector.forceReset();
+    }
+  }
 }
 
 // ── LCU 연결 이벤트 ──────────────────────────────────────────────

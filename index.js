@@ -4,6 +4,7 @@ const https        = require('https');
 const http         = require('http');
 const fs           = require('fs');
 const path         = require('path');
+const os           = require('os');
 const { EventEmitter } = require('events');
 const { execSync }     = require('child_process');
 
@@ -94,6 +95,31 @@ let lastSavedGameId = null; // 마지막으로 저장한 게임 gameId — 직�
 let fbErrorLogged  = false; // Firebase 오류 중복 경고 방지
 let fbOk           = null;  // null=확인중, true=정상, false=오류
 
+// ── 진행자(브릿지 운영자) 식별 ─────────────────────────────────────
+// 누가 브릿지를 켰는지 사이트에 표시하기 위한 라벨. 앱 계정과 무관, 팀원 명단에서 선택.
+// 같은 PC 재실행 시 같은 노드를 재사용해 stale 노드 누적을 막는다.
+function _stableOperatorId() {
+  const seed = (os.hostname() || 'host') + '|' + ((os.userInfo && os.userInfo().username) || '');
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) { h = (h * 31 + seed.charCodeAt(i)) | 0; }
+  return 'op_' + (h >>> 0).toString(36);
+}
+const OPERATOR_ID   = _stableOperatorId();
+const OPERATOR_FILE = path.join(
+  process.pkg ? path.dirname(process.execPath) : __dirname,
+  'operator.json'
+);
+let operatorName = (() => {
+  try { return JSON.parse(fs.readFileSync(OPERATOR_FILE, 'utf8')).name || null; } catch (_) { return null; }
+})();
+function saveOperatorName(name) {
+  operatorName = (name && String(name).trim()) || null;
+  try { fs.writeFileSync(OPERATOR_FILE, JSON.stringify({ name: operatorName })); } catch (_) {}
+  // 즉시 Firebase 반영 (heartbeat 주기를 기다리지 않고 바로 사이트에 표시)
+  fbSet(`${BRIDGE_ROOT}/operators/${OPERATOR_ID}`,
+    operatorName ? { name: operatorName, at: Date.now() } : null).catch(() => {});
+}
+
 // ── 로컬 상태 페이지 ──────────────────────────────────────────────
 const STATUS_HTML = `<!DOCTYPE html>
 <html lang="ko">
@@ -159,6 +185,21 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#0d1117;color:#e6edf
     <button id="stopBtn" class="stopbtn" onclick="stopBridge()">브릿지 종료</button>
   </div>
 
+  <div class="card" style="padding:18px 24px">
+    <div class="info-title" style="color:#58a6ff;margin-bottom:8px">진행자(브릿지 운영자)</div>
+    <div style="font-size:12px;color:#8b949e;line-height:1.6;margin-bottom:12px">
+      누가 브릿지를 켰는지 사이트에 표시됩니다. <b style="color:#c9d1d9">본인 닉네임을 선택</b>해 주세요.<br>
+      <span style="color:#6e7681">(라이브용 계정 말고 본인 이름으로 골라야 누군지 알 수 있어요)</span>
+    </div>
+    <div style="display:flex;gap:8px">
+      <select id="op" style="flex:1;padding:9px 10px;background:#0d1117;border:1px solid #30363d;border-radius:8px;color:#e6edf3;font-size:13px">
+        <option value="">— 선택 —</option>
+      </select>
+      <button id="opSave" onclick="saveOp()" style="padding:9px 16px;background:#238636;border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:600;cursor:pointer">저장</button>
+    </div>
+    <div id="opMsg" style="font-size:11px;color:#8b949e;margin-top:9px">명단 불러오는 중...</div>
+  </div>
+
   <div class="info-card">
     <div class="info-section">
       <div class="info-title">브릿지란?</div>
@@ -200,6 +241,27 @@ function refresh(){
     }
   });
 }
+function loadRoster(){
+  fetch('/api/roster').then(function(r){return r.json();}).then(function(d){
+    var sel=document.getElementById('op');
+    sel.innerHTML='<option value="">— 선택 —</option>';
+    (d.names||[]).forEach(function(n){
+      var o=document.createElement('option'); o.value=n; o.textContent=n; sel.appendChild(o);
+    });
+    fetch('/api/status').then(function(r){return r.json();}).then(function(s){
+      if(s.operator){ sel.value=s.operator; document.getElementById('opMsg').textContent='현재 진행자: '+s.operator; }
+      else { document.getElementById('opMsg').textContent='아직 선택 안 됨 — 본인 닉네임을 골라주세요'; }
+    });
+  }).catch(function(){ document.getElementById('opMsg').textContent='명단을 불러오지 못했어요 (인터넷 확인)'; });
+}
+function saveOp(){
+  var name=document.getElementById('op').value;
+  document.getElementById('opMsg').textContent='저장 중...';
+  fetch('/api/operator',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name})})
+    .then(function(r){return r.json();}).then(function(d){
+      document.getElementById('opMsg').textContent=d.operator?('✅ 저장됨 · 현재 진행자: '+d.operator):'진행자 선택이 해제됐어요';
+    }).catch(function(){ document.getElementById('opMsg').textContent='저장 실패 — 다시 시도해주세요'; });
+}
 function stopBridge(){
   if(!confirm('브릿지를 종료할까요?')) return;
   fetch('/api/shutdown',{method:'POST'}).catch(function(){});
@@ -214,6 +276,7 @@ function stopBridge(){
   }, 800);
 }
 refresh();
+loadRoster();
 setInterval(refresh,3000);
 </script>
 </body>
@@ -231,8 +294,38 @@ function startStatusServer() {
         connected: !!baseUrl,
         phase:     lastPhase || null,
         fbOk,
+        operator:  operatorName || null,
         now:       Date.now()
       }));
+      return;
+    }
+    // 팀원 명단 (진행자 선택용) — Firebase /players 를 프록시
+    if (req.url === '/api/roster') {
+      fbGet('players').then((players) => {
+        const names = players
+          ? Object.values(players).map((p) => p && p.name).filter(Boolean)
+          : [];
+        names.sort((a, b) => String(a).localeCompare(String(b), 'ko'));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ names: Array.from(new Set(names)) }));
+      }).catch(() => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ names: [] }));
+      });
+      return;
+    }
+    // 진행자 닉네임 설정
+    if (req.url === '/api/operator' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => { body += c; if (body.length > 2000) req.destroy(); });
+      req.on('end', () => {
+        let name = null;
+        try { name = JSON.parse(body).name; } catch (_) {}
+        saveOperatorName(name);
+        if (operatorName) log(`진행자 설정: ${operatorName}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, operator: operatorName || null }));
+      });
       return;
     }
     if (req.url === '/api/shutdown' && req.method === 'POST') {
@@ -355,13 +448,18 @@ async function lcu(path) {
 // 브릿지 프로세스 자체의 생존 신호. LCU 연결 여부와 무관하게 실행되어야 한다.
 function startHeartbeat() {
   if (heartbeatTimer) return;
-  fbSet(`${BRIDGE_ROOT}/heartbeat`, Date.now());
-  heartbeatTimer = setInterval(() => fbSet(`${BRIDGE_ROOT}/heartbeat`, Date.now()), 5000);
+  const beat = () => {
+    fbSet(`${BRIDGE_ROOT}/heartbeat`, Date.now());                                   // 레거시(구버전 웹 호환)
+    fbSet(`${BRIDGE_ROOT}/operators/${OPERATOR_ID}`, { name: operatorName || null, at: Date.now() }); // 다중 진행자 표시용
+  };
+  beat();
+  heartbeatTimer = setInterval(beat, 5000);
 }
 
 function stopHeartbeat() {
   if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
   fbSet(`${BRIDGE_ROOT}/heartbeat`, null).catch(() => {});
+  fbSet(`${BRIDGE_ROOT}/operators/${OPERATOR_ID}`, null).catch(() => {});
 }
 
 // ── 종료 정리 ─────────────────────────────────────────────────────
@@ -372,6 +470,7 @@ async function cleanup() {
     await Promise.all([
       axios.put(`${FIREBASE_URL}/${BRIDGE_ROOT}/connected.json`,  JSON.stringify(false), { timeout: 2000 }),
       axios.put(`${FIREBASE_URL}/${BRIDGE_ROOT}/heartbeat.json`,  JSON.stringify(null),  { timeout: 2000 }),
+      axios.put(`${FIREBASE_URL}/${BRIDGE_ROOT}/operators/${OPERATOR_ID}.json`, JSON.stringify(null), { timeout: 2000 }),
     ]);
   } catch (_) {}
 }
@@ -405,9 +504,18 @@ async function checkFirebase() {
 // ── 중복 실행 감지 (heartbeat 쓰기 전에 호출해야 자기 자신 오탐 방지) ──
 async function checkDuplicateBridge() {
   try {
-    const hb = await fbGet(`${BRIDGE_ROOT}/heartbeat`);
-    if (hb && Date.now() - hb < 10000) {
-      log('⚠️  다른 브릿지가 이미 실행 중입니다. 기존 브릿지를 먼저 종료하세요.');
+    const ops = await fbGet(`${BRIDGE_ROOT}/operators`);
+    const active = ops
+      ? Object.values(ops).filter((o) => o && o.at && Date.now() - o.at < 15000)
+      : [];
+    if (active.length) {
+      const who = active.map((o) => o.name || '익명').join(', ');
+      log(`ℹ️  다른 진행자가 이미 브릿지 실행 중: ${who} (같은 게임이면 중복 저장은 자동 차단됩니다)`);
+    } else {
+      const hb = await fbGet(`${BRIDGE_ROOT}/heartbeat`);
+      if (hb && Date.now() - hb < 10000) {
+        log('ℹ️  다른 브릿지가 이미 실행 중입니다(구버전).');
+      }
     }
   } catch (_) {}
 }

@@ -88,6 +88,7 @@ let baseUrl        = null;
 let lastPhase      = null;
 let pollTimer      = null;
 let heartbeatTimer = null;
+let activeIsCustom = null;  // 현재 게임이 커스텀(내전)인지 — gameData.isCustomGame (v1.1.33~). false=일반게임 → normal_matches 로 분리
 let eogSaved       = false;
 let gameInProgress = false; // InProgress 진입 시 true — 비정상 종료(Reconnect/점프) 시 EOG 캡처 판단용 (v1.1.29~)
 let activeGameId   = null;  // 현재 진행 중 게임의 gameId — 이전 게임 통계 오저장 방지 (v1.1.29~)
@@ -620,6 +621,26 @@ async function handleEndOfGame(abnormal = false) {
       }
     }
 
+    // 🎮 일반게임(비커스텀) 분리 — 내전 EOG 흐름(bridge/eogStats)을 오염시키지 않도록 별도 노드에 기록 (v1.1.33~)
+    // gameId 를 키로 써서 다중 브릿지가 같은 게임을 잡아도 같은 키로 덮어쓰기(중복 없음).
+    if (activeIsCustom === false) {
+      let season = null;
+      try { const sv = await fbGet('config/currentSeason'); season = (sv != null) ? Number(sv) : null; } catch (_) {}
+      const gid = currentGameId || ('g' + Date.now());
+      await fbSet(`normal_matches/${gid}`, {
+        gameId:   currentGameId || null,
+        ts:       Date.now(),
+        season,
+        gameTime: eog.gameLength || 0,
+        winSide,
+        players,
+      });
+      eogSaved = true;
+      if (currentGameId) lastSavedGameId = currentGameId;
+      log(`🎮 일반게임 기록 저장 (normal_matches/${gid}, 멤버 ${players.length}명) — 내전 EOG 미전송`);
+      return;
+    }
+
     // ETag 조건부 PUT — 다른 브릿지가 우리 GET 이후 먼저 쓰면 412 발생 → skip (v1.1.26~)
     const _eogPayload = {
       players,
@@ -675,6 +696,7 @@ async function poll() {
           try {
             const _sess = await lcu('/lol-gameflow/v1/session');
             if (_sess?.gameData?.gameId) activeGameId = _sess.gameData.gameId;
+            if (_sess?.gameData) activeIsCustom = !!_sess.gameData.isCustomGame;  // 내전(커스텀로비)=true, 일반매칭=false
           } catch (_) {}
           await fbSet(`${BRIDGE_ROOT}/gamePhase`,'InProgress');
           try {
@@ -722,6 +744,7 @@ async function poll() {
             eogSaved = false;
             gameInProgress = false;
             activeGameId = null;
+            activeIsCustom = null;
           }
           break;
       }

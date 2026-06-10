@@ -471,6 +471,7 @@ async function cleanup() {
     await Promise.all([
       axios.put(`${FIREBASE_URL}/${BRIDGE_ROOT}/connected.json`,  JSON.stringify(false), { timeout: 2000 }),
       axios.put(`${FIREBASE_URL}/${BRIDGE_ROOT}/heartbeat.json`,  JSON.stringify(null),  { timeout: 2000 }),
+      axios.put(`${FIREBASE_URL}/${BRIDGE_ROOT}/inGame.json`,     JSON.stringify(null),  { timeout: 2000 }),
       axios.put(`${FIREBASE_URL}/${BRIDGE_ROOT}/operators/${OPERATOR_ID}.json`, JSON.stringify(null), { timeout: 2000 }),
     ]);
   } catch (_) {}
@@ -684,6 +685,10 @@ async function poll() {
     if (phase !== lastPhase) {
       log(`페이즈 변경: ${lastPhase ?? '-'} → ${phase}`);
       lastPhase = phase;
+      // 🎮 진행 중 게임 배너용 — InProgress(게임 중) 외 페이즈로 바뀌면 정리 (v1.1.34~)
+      if (phase !== 'GameStart' && phase !== 'InProgress') {
+        fbSet(`${BRIDGE_ROOT}/inGame`, null).catch(() => {});
+      }
 
       switch (phase) {
         case 'ChampSelect':
@@ -699,6 +704,7 @@ async function poll() {
             if (_sess?.gameData) activeIsCustom = !!_sess.gameData.isCustomGame;  // 내전(커스텀로비)=true, 일반매칭=false
           } catch (_) {}
           await fbSet(`${BRIDGE_ROOT}/gamePhase`,'InProgress');
+          let _pickNames = [];
           try {
             const picks = await fbGet(`${BRIDGE_ROOT}/champSelect`);
             if (picks) {
@@ -706,9 +712,12 @@ async function poll() {
               for (const p of [...(picks.myTeam||[]), ...(picks.theirTeam||[])]) {
                 if (p.champId && p.name) pickMap[p.champId] = p.name;
               }
+              _pickNames = Object.values(pickMap).filter(Boolean);
               await fbSet(`${BRIDGE_ROOT}/lastChampPicks`, pickMap);
             }
           } catch (_) {}
+          // 🎮 진행 중 게임 정보 — 웹 "진행 중" 배너용(게임 종류 + 참가자명) (v1.1.34~)
+          await fbSet(`${BRIDGE_ROOT}/inGame`, { isCustom: activeIsCustom, players: _pickNames, at: Date.now() });
           await fbSet(`${BRIDGE_ROOT}/champSelect`, null);
           break;
 
@@ -803,9 +812,11 @@ connector.on('disconnect', async () => {
   eogSaved  = false;
   gameInProgress = false;
   activeGameId = null;
+  activeIsCustom = null;
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   // heartbeat는 브릿지 프로세스 생존 신호이므로 LCU 연결과 무관하게 유지
   await fbSet(`${BRIDGE_ROOT}/connected`, false).catch(() => {});
+  await fbSet(`${BRIDGE_ROOT}/inGame`, null).catch(() => {});  // 🎮 진행 중 배너 정리
 });
 
 // ── 시작 ─────────────────────────────────────────────────────────

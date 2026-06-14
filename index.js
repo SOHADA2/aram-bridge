@@ -332,7 +332,9 @@ function startStatusServer() {
     if (req.url === '/api/shutdown' && req.method === 'POST') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
-      setTimeout(() => process.exit(0), 300);
+      // Firebase 노드 정리(operators/heartbeat/inGame) 후 종료 — 안 하면 웹앱이 최대 120초간 "연결중"으로 남음 (v1.1.35)
+      (async () => { try { await cleanup(); } catch (_) {} process.exit(0); })();
+      setTimeout(() => process.exit(0), 3000); // 안전망: cleanup이 멈춰도 강제 종료
       return;
     }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });

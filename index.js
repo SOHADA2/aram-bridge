@@ -106,6 +106,7 @@ function _stableOperatorId() {
   return 'op_' + (h >>> 0).toString(36);
 }
 const OPERATOR_ID   = _stableOperatorId();
+const BRIDGE_VER    = require('./package.json').version;   // 웹앱이 구버전 진행자에게 업데이트 안내하도록 노출 (v1.1.37~)
 const OPERATOR_FILE = path.join(
   process.pkg ? path.dirname(process.execPath) : __dirname,
   'operator.json'
@@ -118,7 +119,7 @@ function saveOperatorName(name) {
   try { fs.writeFileSync(OPERATOR_FILE, JSON.stringify({ name: operatorName })); } catch (_) {}
   // 즉시 Firebase 반영 (heartbeat 주기를 기다리지 않고 바로 사이트에 표시)
   fbSet(`${BRIDGE_ROOT}/operators/${OPERATOR_ID}`,
-    operatorName ? { name: operatorName, at: Date.now() } : null).catch(() => {});
+    operatorName ? { name: operatorName, at: Date.now(), ver: BRIDGE_VER } : null).catch(() => {});
 }
 
 // ── 로컬 상태 페이지 ──────────────────────────────────────────────
@@ -453,7 +454,7 @@ function startHeartbeat() {
   if (heartbeatTimer) return;
   const beat = () => {
     fbSet(`${BRIDGE_ROOT}/heartbeat`, Date.now());                                   // 레거시(구버전 웹 호환)
-    fbSet(`${BRIDGE_ROOT}/operators/${OPERATOR_ID}`, { name: operatorName || null, at: Date.now() }); // 다중 진행자 표시용
+    fbSet(`${BRIDGE_ROOT}/operators/${OPERATOR_ID}`, { name: operatorName || null, at: Date.now(), ver: BRIDGE_VER }); // 다중 진행자 표시용
   };
   beat();
   heartbeatTimer = setInterval(beat, 5000);

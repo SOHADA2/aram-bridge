@@ -718,6 +718,16 @@ async function poll() {
               await fbSet(`${BRIDGE_ROOT}/lastChampPicks`, pickMap);
             }
           } catch (_) {}
+          // 🎮 명단 보강 — champSelect가 비면(브릿지를 게임 도중 켰거나 캡처 실패) gameflow 세션에서 직접 (v1.1.36)
+          if (_pickNames.length === 0) {
+            try {
+              const teams = [ ...((_sess?.gameData?.teamOne) || []), ...((_sess?.gameData?.teamTwo) || []) ];
+              _pickNames = teams
+                .map(p => p.summonerName || p.gameName || (typeof p.riotId === 'string' ? p.riotId.split('#')[0] : '') || '')
+                .filter(Boolean);
+              if (_pickNames.length) log(`명단 보강(gameflow 세션): ${_pickNames.length}명`);
+            } catch (_) {}
+          }
           // 🎮 진행 중 게임 정보 — 웹 "진행 중" 배너용(게임 종류 + 참가자명) (v1.1.34~)
           await fbSet(`${BRIDGE_ROOT}/inGame`, { isCustom: activeIsCustom, players: _pickNames, at: Date.now() });
           await fbSet(`${BRIDGE_ROOT}/champSelect`, null);

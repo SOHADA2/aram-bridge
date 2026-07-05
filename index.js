@@ -82,6 +82,26 @@ const lcuClient = axios.create({
   timeout: 4000
 });
 
+// ── Live Client Data API (인게임 프로세스가 띄우는 로컬 API·포트 2999) ─────────
+// 게임이 실제 로딩된 뒤에만 응답(로딩 화면/게임 밖에선 연결거부·404). 인증 불필요, 자체서명 인증서만 무시.
+// LCU(champSelect/gameflow)가 Riot ID 전환 이후 '진행 중' 이름을 빈 문자열로 주는 문제 때문에,
+// 진행 중 참가자 명단의 확정(1순위) 소스로 사용 (v1.1.38~).
+const liveClient = axios.create({
+  baseURL: 'https://127.0.0.1:2999/liveclientdata',
+  httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+  timeout: 2000
+});
+async function liveGamePlayerNames() {
+  try {
+    const res = await liveClient.get('/playerlist');
+    const list = Array.isArray(res.data) ? res.data : [];
+    return list
+      .filter(p => !p.isBot)
+      .map(p => String(p.riotIdGameName || p.summonerName || (typeof p.riotId === 'string' ? p.riotId.split('#')[0] : '') || '').trim())
+      .filter(Boolean);
+  } catch (_) { return []; }   // 게임 로딩 전/게임 밖이면 실패(정상) — 폴에서 재시도
+}
+
 // ── 상태 변수 ────────────────────────────────────────────────────
 const connector    = new LockfileConnector();
 let baseUrl        = null;
@@ -92,6 +112,9 @@ let activeIsCustom = null;  // 현재 게임이 커스텀(내전)인지 — game
 let eogSaved       = false;
 let gameInProgress = false; // InProgress 진입 시 true — 비정상 종료(Reconnect/점프) 시 EOG 캡처 판단용 (v1.1.29~)
 let activeGameId   = null;  // 현재 진행 중 게임의 gameId — 이전 게임 통계 오저장 방지 (v1.1.29~)
+let inGamePlayersFilled = false; // 진행 중 참가자 명단을 Live Client로 확정했는지 — 아니면 매 폴 재시도 (v1.1.38~)
+let _lastSess      = null;  // 마지막 gameflow 세션(명단 폴백 재사용)
+let _lastPickNames = [];    // 마지막 champSelect 캡처 이름(폴백)
 let lastSavedGameId = null; // 마지막으로 저장한 게임 gameId — 직전 게임 재캡처 차단 (v1.1.30~)
 let fbErrorLogged  = false; // Firebase 오류 중복 경고 방지
 let fbOk           = null;  // null=확인중, true=정상, false=오류
@@ -677,6 +700,33 @@ async function handleEndOfGame(abnormal = false) {
   } catch (_) {}
 }
 
+// ── 진행 중 참가자 명단 수집 (Live Client Data 1순위 → champSelect → gameflow) (v1.1.38~) ──
+// Live Client Data(2999)는 게임이 실제 로딩된 뒤에야 응답하므로, 확정 전엔 폴에서 계속 재시도한다.
+async function updateInGamePlayers(initial = false) {
+  if (!gameInProgress || inGamePlayersFilled) return;
+  // 1순위(확정): 인게임 API — 전원(상대팀 포함) 실제 이름. 성공하면 확정하고 재시도 중단.
+  const live = await liveGamePlayerNames();
+  if (live.length) {
+    await fbSet(`${BRIDGE_ROOT}/inGame`, { isCustom: activeIsCustom, players: live, at: Date.now() });
+    inGamePlayersFilled = true;
+    log(`🎮 진행 중 명단 ${live.length}명 (liveclient)`);
+    return;
+  }
+  // Live Client 아직 응답 안 함(게임 로딩 중) → 초기 1회만 폴백 이름으로 배너를 채우고, 다음 폴에서 재시도.
+  if (!initial) return;
+  let names = [], src = 'none';
+  if (_lastPickNames.length) { names = _lastPickNames.slice(); src = 'champSelect'; }
+  else if (_lastSess) {
+    try {
+      const teams = [ ...((_lastSess?.gameData?.teamOne) || []), ...((_lastSess?.gameData?.teamTwo) || []) ];
+      names = teams.map(p => String(p.summonerName || p.gameName || (typeof p.riotId === 'string' ? p.riotId.split('#')[0] : '') || '').trim()).filter(Boolean);
+      src = 'gameflow';
+    } catch (_) {}
+  }
+  await fbSet(`${BRIDGE_ROOT}/inGame`, { isCustom: activeIsCustom, players: names, at: Date.now() });
+  if (names.length) log(`🎮 진행 중 명단(임시) ${names.length}명 (${src}) — Live Client 대기 중`);
+}
+
 // ── 게임 페이즈 폴링 (3초 간격) ───────────────────────────────────
 let _pollFailCount = 0; // LCU 응답 연속 실패 카운트 (v1.1.31~)
 async function poll() {
@@ -690,6 +740,7 @@ async function poll() {
       lastPhase = phase;
       // 🎮 진행 중 게임 배너용 — InProgress(게임 중) 외 페이즈로 바뀌면 정리 (v1.1.34~)
       if (phase !== 'GameStart' && phase !== 'InProgress') {
+        inGamePlayersFilled = false;   // 다음 게임 대비 초기화 (v1.1.38~)
         fbSet(`${BRIDGE_ROOT}/inGame`, null).catch(() => {});
       }
 
@@ -701,13 +752,15 @@ async function poll() {
         case 'GameStart':
         case 'InProgress':
           gameInProgress = true;
+          inGamePlayersFilled = false; _lastPickNames = [];   // 새 게임 — 명단 재수집 (v1.1.38~)
           try {
             const _sess = await lcu('/lol-gameflow/v1/session');
             if (_sess?.gameData?.gameId) activeGameId = _sess.gameData.gameId;
             if (_sess?.gameData) activeIsCustom = !!_sess.gameData.isCustomGame;  // 내전(커스텀로비)=true, 일반매칭=false
+            _lastSess = _sess;   // 폴 재시도에서 gameflow 폴백 재사용
           } catch (_) {}
           await fbSet(`${BRIDGE_ROOT}/gamePhase`,'InProgress');
-          let _pickNames = [];
+          // champSelect 캡처 → lastChampPicks(EOG 이름 보완용) 저장 + 폴백 이름 준비
           try {
             const picks = await fbGet(`${BRIDGE_ROOT}/champSelect`);
             if (picks) {
@@ -715,23 +768,15 @@ async function poll() {
               for (const p of [...(picks.myTeam||[]), ...(picks.theirTeam||[])]) {
                 if (p.champId && p.name) pickMap[p.champId] = p.name;
               }
-              _pickNames = Object.values(pickMap).filter(Boolean);
-              await fbSet(`${BRIDGE_ROOT}/lastChampPicks`, pickMap);
+              if (Object.keys(pickMap).length) {
+                await fbSet(`${BRIDGE_ROOT}/lastChampPicks`, pickMap);
+                _lastPickNames = Object.values(pickMap).filter(Boolean);
+              }
             }
           } catch (_) {}
-          // 🎮 명단 보강 — champSelect가 비면(브릿지를 게임 도중 켰거나 캡처 실패) gameflow 세션에서 직접 (v1.1.36)
-          if (_pickNames.length === 0) {
-            try {
-              const teams = [ ...((_sess?.gameData?.teamOne) || []), ...((_sess?.gameData?.teamTwo) || []) ];
-              _pickNames = teams
-                .map(p => p.summonerName || p.gameName || (typeof p.riotId === 'string' ? p.riotId.split('#')[0] : '') || '')
-                .filter(Boolean);
-              if (_pickNames.length) log(`명단 보강(gameflow 세션): ${_pickNames.length}명`);
-            } catch (_) {}
-          }
-          // 🎮 진행 중 게임 정보 — 웹 "진행 중" 배너용(게임 종류 + 참가자명) (v1.1.34~)
-          await fbSet(`${BRIDGE_ROOT}/inGame`, { isCustom: activeIsCustom, players: _pickNames, at: Date.now() });
           await fbSet(`${BRIDGE_ROOT}/champSelect`, null);
+          // 🎮 진행 중 참가자 명단 — Live Client Data(2999) 1순위, 로딩 전엔 폴백+폴 재시도 (v1.1.38~)
+          await updateInGamePlayers(true);
           break;
 
         case 'PreEndOfGame':
@@ -781,6 +826,11 @@ async function poll() {
     if (gameInProgress && !eogSaved &&
         ['EndOfGame','PreEndOfGame','WaitingForStats','Reconnect'].includes(phase)) {
       await handleEndOfGame(phase === 'Reconnect');
+    }
+
+    // 🎮 진행 중 참가자 명단 — Live Client Data(2999)는 게임 로딩 후에야 응답 → 확정 전엔 매 폴 재시도 (v1.1.38~)
+    if (gameInProgress && !inGamePlayersFilled && (phase === 'InProgress' || phase === 'GameStart')) {
+      await updateInGamePlayers(false);
     }
 
   } catch (_) {

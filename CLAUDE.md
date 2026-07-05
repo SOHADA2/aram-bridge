@@ -68,6 +68,7 @@ gh release create vX.X.X dist/aram-bridge-vX.X.X.zip dist/aram-bridge-vX.X.X.exe
 ## 버전 이력 요약
 | 버전 | 주요 변경 |
 |------|-----------|
+| v1.1.38 | **진행 중 참가자 명단 근본 수정 — Live Client Data API(2999) 도입** — champSelect/gameflow 세션은 Riot ID 전환 이후 '진행 중' 이름을 빈 문자열로 줘서 `inGame.players`가 비던 문제. 게임 프로세스가 직접 띄우는 인게임 API `https://127.0.0.1:2999/liveclientdata/playerlist`(인증 불필요·자체서명 무시)를 **확정 1순위 소스**로 추가. 이 API는 게임이 실제 로딩된 뒤에만 응답하므로, 확정 전엔 champSelect→gameflow 폴백으로 임시 배너를 채우고 **매 폴(3초)마다 재시도**해 로딩 완료 시 전원(상대팀 포함) 실명으로 확정(`liveGamePlayerNames`/`updateInGamePlayers`/`inGamePlayersFilled`). 브릿지를 게임 도중 켜거나 챔프셀렉 이름이 가려져도 채워짐 |
 | v1.1.2 | wmic 없이 lockfile 직접 파싱 (Windows 11 대응) |
 | v1.1.19 | self-restart 제거, 단일 프로세스로 HTTP 서버 운영 |
 | v1.1.21 | VBS 런처 배포 방식 전환, Zone.Identifier 자동 해제 |
